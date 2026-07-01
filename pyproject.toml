@@ -1,0 +1,23 @@
+[project]
+name = "kl-observatory"
+version = "0.1.0"
+description = "Operational observability dashboard for KwikLedgers agent metrics."
+readme = "README.md"
+requires-python = ">=3.11,<4.0"
+authors = [{ name = "KwikLedgers", email = "dev@kwikledgers.com" }]
+dependencies = [
+	"fastapi>=0.115.0,<0.116.0",
+	"pandas>=2.2.2,<3.0.0",
+	"psycopg[binary]>=3.2.1,<4.0.0",
+	"requests>=2.32.3,<3.0.0",
+	"sqlalchemy>=2.0.36,<3.0.0",
+	"streamlit>=1.37.1,<2.0.0",
+	"uvicorn>=0.32.0,<0.33.0",
+]
+
+[tool.poetry]
+packages = [{ include = "kl_observatory", from = "src" }]
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
