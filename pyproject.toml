@@ -15,8 +15,15 @@ dependencies = [
 	"uvicorn>=0.32.0,<0.33.0",
 ]
 
+[project.scripts]
+kl-observatory = "kl_observatory.launcher:main"
+build-kl-observatory = "kl_observatory.builder:main"
+
 [tool.poetry]
 packages = [{ include = "kl_observatory", from = "src" }]
+
+[tool.poetry.group.dev.dependencies]
+pyinstaller = { version = ">=6.14.2,<7.0.0", python = ">=3.11,<3.16" }
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]

@@ -6,6 +6,10 @@ This project reads the existing workspace tracking outputs under
 `../AI_Tracking`, persists snapshots into Postgres through a small FastAPI
 service, and exposes the operational view through Streamlit.
 
+It also ships with a native launcher that starts both FastAPI and Streamlit in
+one process tree, plus a Poetry build command that produces the native
+executable for the current operating system.
+
 ## What It Shows
 
 - agent usage events captured in `AI_Tracking/Metrics/ai-usage-log.md`
@@ -40,6 +44,46 @@ poetry install
 poetry run uvicorn kl_observatory.api:app --host 0.0.0.0 --port 8000
 poetry run streamlit run src/kl_observatory/dashboard.py
 ```
+
+## Unified Launcher
+
+Run both services together from one command:
+
+```bash
+poetry run kl-observatory
+```
+
+Optional arguments:
+
+```bash
+poetry run kl-observatory --host 0.0.0.0 --api-port 8000 --dashboard-port 8501
+```
+
+The launcher defaults to a local SQLite database for standalone execution. In
+Docker or other managed environments, `DATABASE_URL` can still point to
+Postgres.
+
+## Build Native Executable
+
+Build the executable for the current OS:
+
+```bash
+poetry install
+poetry run build-kl-observatory
+```
+
+Output:
+
+- Linux/macOS: `dist/kl-observatory`
+- Windows: `dist/kl-observatory.exe`
+
+Notes:
+
+- Native binaries must be built on the target OS. The Linux build produces a
+  Linux binary, the Windows build produces a Windows `.exe`, and the macOS
+  build produces a macOS binary.
+- The build command bundles the Streamlit dashboard entry file and starts both
+  FastAPI and Streamlit from the same executable.
 
 ## Notes
 
