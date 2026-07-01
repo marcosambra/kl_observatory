@@ -23,9 +23,9 @@ def main() -> None:
     from PyInstaller.__main__ import run as run_pyinstaller
 
     args = _parse_args()
-    project_root = Path(__file__).resolve().parents[2]
-    launcher_path = project_root / "src" / "kl_observatory" / "launcher.py"
-    dashboard_path = project_root / "src" / "kl_observatory" / "dashboard.py"
+    project_root = Path(__file__).resolve().parents[1]
+    launcher_path = project_root / "src" / "launcher.py"
+    streamlit_entry_path = project_root / "streamlit_app.py"
     streamlit_config_path = project_root / ".streamlit" / "config.toml"
     build_root = project_root / "build" / "pyinstaller"
 
@@ -37,11 +37,12 @@ def main() -> None:
         f"--distpath={project_root / 'dist'}",
         f"--workpath={build_root}",
         f"--specpath={build_root}",
-        f"--add-data={_add_data_argument(dashboard_path, 'kl_observatory_resources')}",
+        f"--add-data={_add_data_argument(streamlit_entry_path, 'kl_observatory_resources')}",
         f"--add-data={_add_data_argument(streamlit_config_path, '.streamlit')}",
         "--collect-all=streamlit",
         "--collect-all=altair",
         "--collect-all=pyarrow",
+        "--collect-submodules=src",
         "--collect-submodules=uvicorn",
         "--collect-submodules=sqlalchemy.dialects",
         "--hidden-import=psycopg_binary",

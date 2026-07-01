@@ -41,8 +41,8 @@ Services:
 
 ```bash
 poetry install
-poetry run uvicorn kl_observatory.api:app --host 0.0.0.0 --port 8000
-poetry run streamlit run src/kl_observatory/dashboard.py
+poetry run uvicorn src.api:app --host 0.0.0.0 --port 8000
+poetry run streamlit run streamlit_app.py
 ```
 
 ## Unified Launcher

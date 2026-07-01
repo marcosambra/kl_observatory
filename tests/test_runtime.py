@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import runpy
 import tempfile
 import unittest
 from pathlib import Path
@@ -9,7 +10,7 @@ from unittest.mock import patch
 
 class ConfigTests(unittest.TestCase):
     def test_default_database_url_uses_sqlite_file(self) -> None:
-        from kl_observatory import config
+        from src import config
 
         with tempfile.TemporaryDirectory() as temp_dir:
             runtime_root = Path(temp_dir)
@@ -19,7 +20,7 @@ class ConfigTests(unittest.TestCase):
             self.assertTrue((runtime_root / "var").exists())
 
     def test_tracking_root_is_discovered_from_parent_chain(self) -> None:
-        from kl_observatory import config
+        from src import config
 
         with tempfile.TemporaryDirectory() as temp_dir:
             workspace_root = Path(temp_dir)
@@ -35,7 +36,7 @@ class ConfigTests(unittest.TestCase):
 
 class BuilderTests(unittest.TestCase):
     def test_add_data_argument_uses_platform_separator(self) -> None:
-        from kl_observatory.builder import _add_data_argument
+        from src.builder import _add_data_argument
 
         source = Path("/tmp/dashboard.py")
 
@@ -50,6 +51,15 @@ class BuilderTests(unittest.TestCase):
                 _add_data_argument(source, "bundle"),
                 "/tmp/dashboard.py;bundle",
             )
+
+
+class DashboardRuntimeTests(unittest.TestCase):
+    def test_streamlit_wrapper_imports_dashboard_module(self) -> None:
+        wrapper_path = Path(__file__).resolve().parents[1] / "streamlit_app.py"
+
+        globals_dict = runpy.run_path(str(wrapper_path))
+
+        self.assertIn("main", globals_dict)
 
 
 if __name__ == "__main__":
