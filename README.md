@@ -59,6 +59,19 @@ Services:
 - FastAPI: `http://localhost:8000`
 - Postgres: `localhost:5432`
 
+The `Refresh From Azure Agent` button in the dashboard dispatches an external
+observatory script at `scripts/refresh_from_azure_agent.py`, which then calls
+the shared workspace runner under `../agent/scripts/run_daily_summary.py`.
+In the provided Docker Compose setup, the API container mounts `../agent`,
+mounts `./scripts`, and keeps `AI_Tracking` writable specifically so this
+refresh path can update tracking files before the observatory re-syncs them.
+
+You can also run the refresh script manually:
+
+```bash
+poetry run python scripts/refresh_from_azure_agent.py --source manual-refresh
+```
+
 ## Local Python Run
 
 ```bash

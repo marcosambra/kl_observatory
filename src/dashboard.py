@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import altair as alt
 from datetime import datetime
 from pathlib import Path
 import sys
@@ -25,6 +26,24 @@ from src.tracking_insights import build_tracking_insights
 DashboardState = dict[str, Any]
 SignalData = dict[str, Any]
 
+SEMANTIC_COLORS = {
+    "positive": "#22c55e",
+    "negative": "#ef4444",
+    "warning": "#fbbf24",
+    "neutral": "#38bdf8",
+    "accent": "#c084fc",
+    "muted": "#94a3b8",
+}
+
+ROW_TONE_STYLES = {
+    "positive": "background-color: rgba(34, 197, 94, 0.14); border-left: 0.35rem solid #22c55e;",
+    "negative": "background-color: rgba(239, 68, 68, 0.14); border-left: 0.35rem solid #ef4444;",
+    "warning": "background-color: rgba(251, 191, 36, 0.14); border-left: 0.35rem solid #fbbf24;",
+    "neutral": "background-color: rgba(56, 189, 248, 0.12); border-left: 0.35rem solid #38bdf8;",
+    "accent": "background-color: rgba(192, 132, 252, 0.14); border-left: 0.35rem solid #c084fc;",
+    "muted": "background-color: rgba(148, 163, 184, 0.12); border-left: 0.35rem solid #94a3b8;",
+}
+
 
 def sync_via_api(api_base_url: str) -> tuple[bool, str]:
     try:
@@ -37,6 +56,23 @@ def sync_via_api(api_base_url: str) -> tuple[bool, str]:
             f"{payload['sprint_metrics_synced']} sprint rows, "
             f"{payload['snapshots_synced']} snapshots."
         )
+    except requests.RequestException as exc:
+        return False, str(exc)
+
+
+def refresh_azure_via_api(api_base_url: str) -> tuple[bool, str]:
+    try:
+        response = requests.post(f"{api_base_url}/refresh/azure", timeout=180)
+        response.raise_for_status()
+        payload = response.json()
+        sync_counts = (
+            f"{payload['usage_events_synced']} usage events, "
+            f"{payload['sprint_metrics_synced']} sprint rows, "
+            f"{payload['snapshots_synced']} snapshots"
+        )
+        agent_stdout = payload.get("agent_refresh", {}).get("stdout", "")
+        headline = agent_stdout.splitlines()[0] if agent_stdout else "Azure MCP refresh completed."
+        return True, f"{headline} Persisted: {sync_counts}."
     except requests.RequestException as exc:
         return False, str(exc)
 
@@ -99,6 +135,143 @@ def _logo_path() -> Path:
     return _resource_root() / "assets" / "ambra.png"
 
 
+def _tone_for_label(label: str) -> str:
+    normalized = label.strip().lower()
+    if any(token in normalized for token in ("blocked", "error", "risk", "debt", "failed", "late", "stale")):
+        return "negative"
+    if any(token in normalized for token in ("done", "closed", "complete", "completed", "resolved", "success")):
+        return "positive"
+    if any(token in normalized for token in ("q.a", "qa", "review", "waiting", "pending", "warning", "validation")):
+        return "warning"
+    return "neutral"
+
+
+def _tone_for_pr_age(age_days: Any) -> str:
+    value = _safe_float(age_days)
+    if value > 30:
+        return "negative"
+    if value > 7:
+        return "warning"
+    return "positive"
+
+
+def _safe_float(value: Any) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _build_semantic_frame(
+    mapping: dict[str, Any],
+    *,
+    label_column: str,
+    value_column: str,
+) -> pd.DataFrame:
+    if not mapping:
+        return pd.DataFrame(columns=[label_column, value_column, "tone"])
+
+    rows = [
+        {
+            label_column: label,
+            value_column: _safe_float(value),
+            "tone": _tone_for_label(str(label)),
+        }
+        for label, value in mapping.items()
+    ]
+    return pd.DataFrame(rows)
+
+
+def render_semantic_bar_chart(
+    dataframe: pd.DataFrame,
+    *,
+    label_column: str,
+    value_column: str,
+    height: int | None = None,
+) -> None:
+    if dataframe.empty:
+        st.info("No chart data available.")
+        return
+
+    frame = dataframe.copy()
+    if "tone" not in frame:
+        frame["tone"] = "neutral"
+
+    chart_height = height or max(220, len(frame) * 40)
+    palette_domain = list(SEMANTIC_COLORS.keys())
+    palette_range = [SEMANTIC_COLORS[key] for key in palette_domain]
+
+    chart = (
+        alt.Chart(frame)
+        .mark_bar(cornerRadiusTopRight=8, cornerRadiusBottomRight=8)
+        .encode(
+            y=alt.Y(f"{label_column}:N", sort="-x", title=None),
+            x=alt.X(f"{value_column}:Q", title=None),
+            color=alt.Color(
+                "tone:N",
+                scale=alt.Scale(domain=palette_domain, range=palette_range),
+                legend=None,
+            ),
+            tooltip=[label_column, value_column, "tone"],
+        )
+        .properties(height=chart_height)
+    )
+    st.altair_chart(chart, use_container_width=True)
+
+
+def render_styled_dataframe(
+    dataframe: pd.DataFrame,
+    *,
+    tone_resolver: Any,
+) -> None:
+    if dataframe.empty:
+        st.info("No table data available.")
+        return
+
+    def style_row(row: pd.Series) -> list[str]:
+        tone = str(tone_resolver(row) or "neutral")
+        style = ROW_TONE_STYLES.get(tone, ROW_TONE_STYLES["neutral"])
+        return [style] * len(row)
+
+    styled = dataframe.style.apply(style_row, axis=1)
+    try:
+        styled = styled.hide(axis="index")
+    except Exception:
+        pass
+    st.dataframe(styled, use_container_width=True)
+
+
+def _tracking_row_tone(row: pd.Series) -> str:
+    state = str(row.get("exists", "")).strip().lower()
+    if state in {"missing", "false"}:
+        return "negative"
+    if state == "derived":
+        return "warning"
+    if state in {"present", "true"}:
+        return "positive"
+    return "neutral"
+
+
+def _sprint_metric_row_tone(row: pd.Series) -> str:
+    if _safe_float(row.get("blocked_items", 0)) > 0:
+        return "negative"
+    if _safe_float(row.get("remaining_story_points", 0)) <= 0:
+        return "positive"
+    return "warning"
+
+
+def _usage_event_row_tone(row: pd.Series) -> str:
+    if _safe_float(row.get("blocked_items", 0)) > 0:
+        return "negative"
+    if _safe_float(row.get("actions_count", 0)) >= 3:
+        return "positive"
+    return "neutral"
+
+
+def _open_pr_row_tone(row: pd.Series) -> str:
+    return _tone_for_pr_age(row.get("age_days", 0))
+
+
 def render_page_header(title: str, description: str) -> None:
     logo_column, copy_column = st.columns([0.22, 0.78], vertical_alignment="center")
 
@@ -143,7 +316,16 @@ def render_shell(state: DashboardState) -> None:
         else:
             st.sidebar.warning(f"API sync unavailable. {message}")
 
+    if st.sidebar.button("Refresh From Azure Agent", use_container_width=True):
+        refreshed, message = refresh_azure_via_api(settings.api_base_url)
+        if refreshed:
+            st.sidebar.success(message)
+            st.rerun()
+        else:
+            st.sidebar.warning(f"Azure agent refresh unavailable. {message}")
+
     st.sidebar.caption(f"Tracking root: {settings.tracking_root}")
+    st.sidebar.caption(f"Workspace root: {settings.workspace_root}")
     st.sidebar.caption(f"API: {settings.api_base_url}")
     st.sidebar.caption(f"Data source: {state['source_label']}")
 
@@ -186,7 +368,10 @@ def render_tracking_status(overview: dict[str, Any]) -> None:
             status_frame["exists"] = status_frame["exists"].map(
                 lambda value: "present" if value else "missing"
             )
-        st.dataframe(status_frame, use_container_width=True, hide_index=True)
+        render_styled_dataframe(
+            status_frame,
+            tone_resolver=_tracking_row_tone,
+        )
 
     current_snapshot = overview.get("current_snapshot", {})
     if current_snapshot.get("snapshot_source") == "derived_from_metrics":
@@ -286,6 +471,30 @@ def render_metrics(
     col19.metric("Debt items tracked", insight_headline["technical_debt_items"])
     col20.metric("MCP audit errors", insight_headline["audit_errors"])
 
+    col21, col22, col23, col24 = st.columns(4)
+    col21.metric(
+        "Tasks tracked",
+        individual_current["tasks_all_statuses"],
+        delta=f"{individual_current['sprint_stories']} sprint stories",
+    )
+    col22.metric(
+        "Child items tracked",
+        individual_current["children_of_assigned_items"],
+        delta=f"{individual_current['blocked_children_of_assigned_items']:+d} blocked children",
+        delta_color="inverse",
+    )
+    col23.metric(
+        "Child blocker pressure",
+        f"{individual_derived['child_blocker_pressure_pct']:.1f}%",
+        delta=f"{individual_derived['open_children']} open children",
+        delta_color="inverse",
+    )
+    col24.metric(
+        "Sprint progress",
+        f"{manager['progress_by_story_count_pct']:.1f}%",
+        delta=f"{manager['progress_by_story_points_pct']:.1f}% by SP",
+    )
+
 
 def render_sprint_history(overview: dict[str, Any]) -> None:
     sprint_metrics = overview.get("sprint_metrics", [])
@@ -295,18 +504,44 @@ def render_sprint_history(overview: dict[str, Any]) -> None:
 
     dataframe = pd.DataFrame(sprint_metrics)
     dataframe["timestamp"] = pd.to_datetime(dataframe["timestamp"], utc=True)
-    chart_frame = dataframe[["timestamp", "remaining_story_points", "blocked_items"]]
-    chart_frame = chart_frame.set_index("timestamp")
+    chart_frame = dataframe[["timestamp", "remaining_story_points", "blocked_items"]].melt(
+        id_vars="timestamp",
+        var_name="series",
+        value_name="value",
+    )
+    chart_frame["series"] = chart_frame["series"].map(
+        {
+            "remaining_story_points": "Remaining story points",
+            "blocked_items": "Blocked items",
+        }
+    )
 
     st.subheader("Sprint Trajectory")
     st.write(
         "This live trend shows whether story points are burning down while blocker count is stable, rising, or stuck."
     )
-    st.line_chart(chart_frame)
-    st.dataframe(
+    chart = (
+        alt.Chart(chart_frame)
+        .mark_line(point=True, strokeWidth=3)
+        .encode(
+            x=alt.X("timestamp:T", title=None),
+            y=alt.Y("value:Q", title=None),
+            color=alt.Color(
+                "series:N",
+                scale=alt.Scale(
+                    domain=["Remaining story points", "Blocked items"],
+                    range=[SEMANTIC_COLORS["warning"], SEMANTIC_COLORS["negative"]],
+                ),
+                legend=alt.Legend(title=None),
+            ),
+            tooltip=["timestamp:T", "series:N", "value:Q"],
+        )
+        .properties(height=300)
+    )
+    st.altair_chart(chart, use_container_width=True)
+    render_styled_dataframe(
         dataframe[["timestamp", "remaining_story_points", "blocked_items", "summary"]],
-        use_container_width=True,
-        hide_index=True,
+        tone_resolver=_sprint_metric_row_tone,
     )
 
 
@@ -326,7 +561,7 @@ def render_usage_events(overview: dict[str, Any]) -> None:
         st.write(
             "Each row is a recorded agent work session with the scope summary and how many actions it produced."
         )
-        st.dataframe(
+        render_styled_dataframe(
             dataframe[
                 [
                     "timestamp",
@@ -336,13 +571,20 @@ def render_usage_events(overview: dict[str, Any]) -> None:
                     "actions_count",
                 ]
             ],
-            use_container_width=True,
-            hide_index=True,
+            tone_resolver=_usage_event_row_tone,
         )
     with right_column:
-        chart_frame = dataframe[["title", "actions_count"]].set_index("title")
+        chart_frame = dataframe[["title", "actions_count"]].copy()
+        chart_frame["tone"] = chart_frame["actions_count"].apply(
+            lambda value: "positive" if value >= 3 else ("warning" if value == 2 else "neutral")
+        )
         st.subheader("Actions Per Event")
-        st.bar_chart(chart_frame)
+        render_semantic_bar_chart(
+            chart_frame,
+            label_column="title",
+            value_column="actions_count",
+            height=260,
+        )
 
 
 def render_open_prs(overview: dict[str, Any]) -> None:
@@ -353,12 +595,18 @@ def render_open_prs(overview: dict[str, Any]) -> None:
         return
 
     dataframe = pd.DataFrame(open_prs)
+    dataframe["tone"] = dataframe["age_days"].apply(_tone_for_pr_age)
     st.subheader("Open Pull Requests")
     st.write(
         "PR age is a practical review-pressure signal because older PRs often correlate with blocked completion or delayed validation."
     )
-    st.bar_chart(dataframe[["repository", "age_days"]].set_index("repository"))
-    st.dataframe(dataframe, use_container_width=True, hide_index=True)
+    render_semantic_bar_chart(
+        dataframe[["repository", "age_days", "tone"]],
+        label_column="repository",
+        value_column="age_days",
+        height=320,
+    )
+    render_styled_dataframe(dataframe, tone_resolver=_open_pr_row_tone)
 
 
 def render_daily_logs(overview: dict[str, Any]) -> None:
@@ -369,6 +617,111 @@ def render_daily_logs(overview: dict[str, Any]) -> None:
     for daily_log in overview.get("daily_logs", []):
         with st.expander(daily_log["name"]):
             st.markdown(daily_log["content"])
+
+
+def render_status_metrics_page(
+    overview: dict[str, Any],
+    individual_metrics: dict[str, Any],
+    leadership_metrics: dict[str, Any],
+) -> None:
+    current_snapshot = overview.get("current_snapshot", {})
+    counts = current_snapshot.get("counts", {})
+    project_progress = current_snapshot.get("project_progress", {})
+    child_summary = current_snapshot.get("child_items_summary", {})
+    current = individual_metrics["current"]
+    derived = individual_metrics["derived"]
+    tech_lead = leadership_metrics["tech_lead"]
+    manager = leadership_metrics["manager"]
+
+    row1_col1, row1_col2, row1_col3, row1_col4 = st.columns(4)
+    row1_col1.metric("Tasks all statuses", current["tasks_all_statuses"])
+    row1_col2.metric("Children of assigned items", current["children_of_assigned_items"])
+    row1_col3.metric(
+        "Task completion",
+        f"{derived['task_completion_pct']:.1f}%",
+        delta=f"{derived['completed_tasks']} completed tasks",
+    )
+    row1_col4.metric(
+        "Blocked story points",
+        tech_lead["blocked_story_points"],
+        delta=f"{tech_lead['blocked_stories']} blocked stories",
+        delta_color="inverse",
+    )
+
+    task_states = counts.get("tasks_by_state", {}) if isinstance(counts.get("tasks_by_state", {}), dict) else {}
+    assigned_types = counts.get("assigned_items_by_type", {}) if isinstance(counts.get("assigned_items_by_type", {}), dict) else {}
+    story_states = project_progress.get("state_breakdown", {}) if isinstance(project_progress.get("state_breakdown", {}), dict) else {}
+
+    left_column, right_column = st.columns(2)
+    with left_column:
+        st.subheader("Task Status Distribution")
+        render_semantic_bar_chart(
+            _build_semantic_frame(task_states, label_column="status", value_column="count"),
+            label_column="status",
+            value_column="count",
+            height=280,
+        )
+    with right_column:
+        st.subheader("Assigned Items By Type")
+        render_semantic_bar_chart(
+            _build_semantic_frame(assigned_types, label_column="type", value_column="count"),
+            label_column="type",
+            value_column="count",
+            height=280,
+        )
+
+    left_column, right_column = st.columns(2)
+    with left_column:
+        st.subheader("Sprint Story States")
+        render_semantic_bar_chart(
+            _build_semantic_frame(story_states, label_column="state", value_column="count"),
+            label_column="state",
+            value_column="count",
+            height=280,
+        )
+    with right_column:
+        st.subheader("Child Item Execution")
+        child_frame = pd.DataFrame(
+            [
+                {"signal": "Open children", "count": _safe_float(child_summary.get("open_children", 0)), "tone": "warning"},
+                {"signal": "Completed children", "count": _safe_float(child_summary.get("completed_children", 0)), "tone": "positive"},
+                {"signal": "Blocked children", "count": _safe_float(child_summary.get("blocked_children", 0)), "tone": "negative"},
+                {"signal": "Parents with children", "count": _safe_float(child_summary.get("parents_with_children", 0)), "tone": "neutral"},
+            ]
+        )
+        render_semantic_bar_chart(
+            child_frame,
+            label_column="signal",
+            value_column="count",
+            height=280,
+        )
+
+    st.subheader("Status Summary")
+    summary_frame = pd.DataFrame(
+        [
+            {
+                "metric": "Sprint progress by story count",
+                "value": f"{manager['progress_by_story_count_pct']:.1f}%",
+                "meaning": "Tracks how much of the sprint story inventory is complete.",
+            },
+            {
+                "metric": "Sprint progress by story points",
+                "value": f"{manager['progress_by_story_points_pct']:.1f}%",
+                "meaning": "Shows delivery progress weighted by story points instead of item count.",
+            },
+            {
+                "metric": "Child blocker pressure",
+                "value": f"{derived['child_blocker_pressure_pct']:.1f}%",
+                "meaning": "Measures whether execution risk is hiding under child items instead of top-level assignments.",
+            },
+            {
+                "metric": "Sprint stories tracked",
+                "value": current["sprint_stories"],
+                "meaning": "Total stories visible in the current sprint snapshot, even when not assigned to the active developer.",
+            },
+        ]
+    )
+    render_styled_dataframe(summary_frame, tone_resolver=lambda row: _tone_for_label(str(row.get("metric", ""))))
 
 
 def render_overview_page() -> None:
@@ -395,12 +748,14 @@ def render_overview_page() -> None:
     render_tracking_status(overview)
     render_metrics(overview, individual_metrics, leadership_metrics, tracking_insights)
 
-    sprint_tab, usage_tab, pr_tab, log_tab, developer_tab, leadership_tab = st.tabs(
-        ["Sprint", "Agent Usage", "Pull Requests", "Daily Logs", "Developer", "Leadership"]
+    sprint_tab, status_tab, usage_tab, pr_tab, log_tab, developer_tab, leadership_tab = st.tabs(
+        ["Sprint", "Status Map", "Agent Usage", "Pull Requests", "Daily Logs", "Developer", "Leadership"]
     )
 
     with sprint_tab:
         render_sprint_history(overview)
+    with status_tab:
+        render_status_metrics_page(overview, individual_metrics, leadership_metrics)
     with usage_tab:
         render_usage_events(overview)
     with pr_tab:
@@ -423,30 +778,36 @@ def render_individual_summary(individual_metrics: dict[str, Any]) -> None:
     )
 
     developer_frame = pd.DataFrame(
-        {
-            "value": [
-                current["remaining_story_points"],
-                current["remaining_work_hours"],
-                current["assigned_items"],
-                current["open_pr_count"],
-                derived["recent_story_points_burn"],
-            ]
-        },
-        index=[
-            "Remaining SP",
-            "Remaining hours",
-            "Assigned items",
-            "Open PRs",
-            "Recent SP burn",
-        ],
+        [
+            {"signal": "Remaining SP", "value": current["remaining_story_points"], "tone": "warning"},
+            {"signal": "Remaining hours", "value": current["remaining_work_hours"], "tone": "warning"},
+            {"signal": "Assigned items", "value": current["assigned_items"], "tone": "neutral"},
+            {"signal": "Open PRs", "value": current["open_pr_count"], "tone": "warning"},
+            {"signal": "Recent SP burn", "value": derived["recent_story_points_burn"], "tone": "positive"},
+        ]
     )
-    st.bar_chart(developer_frame)
+    render_semantic_bar_chart(
+        developer_frame,
+        label_column="signal",
+        value_column="value",
+        height=260,
+    )
 
     row1_col1, row1_col2, row1_col3, row1_col4 = st.columns(4)
     row1_col1.metric("Review load per item", derived["review_load_per_item"])
     row1_col2.metric("Hours per item", derived["remaining_hours_per_item"])
     row1_col3.metric("SP per item", derived["story_points_per_item"])
     row1_col4.metric("Actions per session", derived["actions_per_session"])
+
+    task_states = current.get("tasks_by_state", {})
+    if task_states:
+        st.subheader("Task States For This Context")
+        render_semantic_bar_chart(
+            _build_semantic_frame(task_states, label_column="status", value_column="count"),
+            label_column="status",
+            value_column="count",
+            height=240,
+        )
 
 
 def render_individual_page() -> None:
@@ -481,6 +842,35 @@ def render_individual_page() -> None:
             delta=f"{derived['blocker_delta']:+d} blocker delta",
         )
 
+        row3_col1, row3_col2, row3_col3, row3_col4 = st.columns(4)
+        row3_col1.metric("Tasks all statuses", current["tasks_all_statuses"])
+        row3_col2.metric("Sprint stories", current["sprint_stories"])
+        row3_col3.metric("Children tracked", current["children_of_assigned_items"])
+        row3_col4.metric(
+            "Child blocker pressure",
+            f"{derived['child_blocker_pressure_pct']:.1f}%",
+            delta=f"{current['blocked_children_of_assigned_items']:+d} blocked children",
+            delta_color="inverse",
+        )
+
+        task_state_column, item_type_column = st.columns(2)
+        with task_state_column:
+            st.subheader("Task Status Breakdown")
+            render_semantic_bar_chart(
+                _build_semantic_frame(current["tasks_by_state"], label_column="status", value_column="count"),
+                label_column="status",
+                value_column="count",
+                height=260,
+            )
+        with item_type_column:
+            st.subheader("Assigned Item Types")
+            render_semantic_bar_chart(
+                _build_semantic_frame(current["assigned_items_by_type"], label_column="type", value_column="count"),
+                label_column="type",
+                value_column="count",
+                height=260,
+            )
+
     with support_tab:
         row1_col1, row1_col2, row1_col3, row1_col4 = st.columns(4)
         row1_col1.metric("Usage sessions", derived["usage_sessions"])
@@ -502,7 +892,7 @@ def render_individual_page() -> None:
                 },
             ]
         )
-        st.dataframe(support_frame, use_container_width=True, hide_index=True)
+        render_styled_dataframe(support_frame, tone_resolver=lambda row: "neutral")
 
 
 def render_metric_plan_page() -> None:
@@ -526,7 +916,7 @@ def render_metric_plan_page() -> None:
                 lambda value: "present" if value else "missing"
             )
             st.subheader("Current Saved Sources")
-            st.dataframe(source_frame, use_container_width=True, hide_index=True)
+            render_styled_dataframe(source_frame, tone_resolver=_tracking_row_tone)
 
     st.subheader("Implementation Roadmap")
     st.dataframe(pd.DataFrame(plan_rows), use_container_width=True, hide_index=True)
@@ -563,27 +953,25 @@ def render_tracking_artifacts_page() -> None:
         storypoint_metrics = storypoints.get("metrics", {})
 
         st.subheader("Optimization Report Metrics")
-        st.dataframe(
+        render_styled_dataframe(
             pd.DataFrame(
                 [
                     {"metric": key, "value": value}
                     for key, value in optimization_metrics.items()
                 ]
             ),
-            use_container_width=True,
-            hide_index=True,
+            tone_resolver=lambda row: _tone_for_label(str(row.get("metric", ""))),
         )
 
         st.subheader("Story Point Impact Metrics")
-        st.dataframe(
+        render_styled_dataframe(
             pd.DataFrame(
                 [
                     {"metric": key, "value": value}
                     for key, value in storypoint_metrics.items()
                 ]
             ),
-            use_container_width=True,
-            hide_index=True,
+            tone_resolver=lambda row: _tone_for_label(str(row.get("metric", ""))),
         )
 
     with debt_tab:
@@ -593,32 +981,34 @@ def render_tracking_artifacts_page() -> None:
         st.subheader("Technical Debt Cache")
         state_counts = debt_summary.get("state_counts", {})
         if state_counts:
-            st.bar_chart(pd.DataFrame({"count": list(state_counts.values())}, index=list(state_counts.keys())))
+            render_semantic_bar_chart(
+                _build_semantic_frame(state_counts, label_column="state", value_column="count"),
+                label_column="state",
+                value_column="count",
+                height=260,
+            )
 
-        st.dataframe(
+        render_styled_dataframe(
             pd.DataFrame(debt_summary.get("files", [])),
-            use_container_width=True,
-            hide_index=True,
+            tone_resolver=lambda row: _tone_for_label(str(row.get("state", row.get("repository_name", "")))),
         )
 
         st.subheader("Technical Debt Preview Cache")
-        st.dataframe(
+        render_styled_dataframe(
             pd.DataFrame(preview_summary.get("files", [])),
-            use_container_width=True,
-            hide_index=True,
+            tone_resolver=lambda row: "neutral",
         )
 
     with audit_tab:
         st.subheader("MCP Audit Summary")
-        st.dataframe(
+        render_styled_dataframe(
             pd.DataFrame(
                 [
                     {"metric": key, "value": value}
                     for key, value in audit_log.get("summary", {}).items()
                 ]
             ),
-            use_container_width=True,
-            hide_index=True,
+            tone_resolver=lambda row: _tone_for_label(str(row.get("metric", ""))),
         )
 
         tail_lines = audit_log.get("tail", [])
@@ -643,17 +1033,19 @@ def render_leadership_summary(leadership_metrics: dict[str, Any]) -> None:
     )
 
     comparison_frame = pd.DataFrame(
-        {
-            "story_points": [
-                tech_lead["planned_story_points"],
-                tech_lead["expected_spent_story_points"],
-                tech_lead["actual_spent_story_points"],
-                manager["forecast_delivered_story_points"],
-            ]
-        },
-        index=["Planned", "Expected spent", "Actual spent", "Forecast delivered"],
+        [
+            {"signal": "Planned", "story_points": tech_lead["planned_story_points"], "tone": "neutral"},
+            {"signal": "Expected spent", "story_points": tech_lead["expected_spent_story_points"], "tone": "warning"},
+            {"signal": "Actual spent", "story_points": tech_lead["actual_spent_story_points"], "tone": "positive"},
+            {"signal": "Forecast delivered", "story_points": manager["forecast_delivered_story_points"], "tone": "accent"},
+        ]
     )
-    st.bar_chart(comparison_frame)
+    render_semantic_bar_chart(
+        comparison_frame,
+        label_column="signal",
+        value_column="story_points",
+        height=240,
+    )
 
     lead_col1, lead_col2, lead_col3, lead_col4 = st.columns(4)
     lead_col1.metric("Burn efficiency", f"{tech_lead['burn_efficiency_pct']:.1f}%")
@@ -666,6 +1058,18 @@ def render_leadership_summary(leadership_metrics: dict[str, Any]) -> None:
     manager_col2.metric("Expected completion", f"{manager['expected_completion_pct']:.1f}%")
     manager_col3.metric("Scope at risk", manager["scope_at_risk_story_points"])
     manager_col4.metric("Review pressure", f"{manager['review_pressure_pct']:.1f}%")
+
+    lead_col5, lead_col6, lead_col7, lead_col8 = st.columns(4)
+    lead_col5.metric("Blocked story points", tech_lead["blocked_story_points"])
+    lead_col6.metric("Blocked stories", tech_lead["blocked_stories"])
+    lead_col7.metric("Children tracked", tech_lead["children_of_assigned_items"])
+    lead_col8.metric("Child blocker pressure", f"{tech_lead['child_blocker_pressure_pct']:.1f}%")
+
+    manager_col5, manager_col6, manager_col7, manager_col8 = st.columns(4)
+    manager_col5.metric("Progress by story count", f"{manager['progress_by_story_count_pct']:.1f}%")
+    manager_col6.metric("Progress by story points", f"{manager['progress_by_story_points_pct']:.1f}%")
+    manager_col7.metric("Completed children", manager["completed_children"])
+    manager_col8.metric("Sprint stories", manager["sprint_stories"])
 
 
 def render_leadership_page() -> None:
@@ -680,9 +1084,14 @@ def render_leadership_page() -> None:
         "Numerical sprint KPIs for the tech lead and manager, including expected story-point burn versus actual burn."
     )
 
-    st.info(
-        "Expected burn is derived from a placeholder sprint elapsed percentage until live sprint start and end dates are exposed through AI_Tracking."
-    )
+    if assumptions.get("elapsed_source") == "sprint_context":
+        st.info(
+            "Expected burn is calculated from the live sprint start and finish dates stored in `sprint_context`, using the snapshot generation time as the reference point."
+        )
+    else:
+        st.info(
+            "Expected burn is using the fallback sprint elapsed percentage because the current snapshot does not expose usable sprint dates yet."
+        )
 
     tech_lead_tab, manager_tab, assumptions_tab = st.tabs(
         ["Tech Lead", "Manager", "Assumptions"]
@@ -705,6 +1114,12 @@ def render_leadership_page() -> None:
         row2_col3.metric("Average PR age", f"{tech_lead['average_pr_age_days']:.1f} days")
         row2_col4.metric("Actions per event", tech_lead["actions_per_event"])
 
+        row3_col1, row3_col2, row3_col3, row3_col4 = st.columns(4)
+        row3_col1.metric("Blocked story points", tech_lead["blocked_story_points"])
+        row3_col2.metric("Blocked stories", tech_lead["blocked_stories"])
+        row3_col3.metric("Children tracked", tech_lead["children_of_assigned_items"])
+        row3_col4.metric("Child blocker pressure", f"{tech_lead['child_blocker_pressure_pct']:.1f}%")
+
     with manager_tab:
         row1_col1, row1_col2, row1_col3, row1_col4 = st.columns(4)
         row1_col1.metric("Completion", f"{manager['completion_pct']:.1f}%")
@@ -718,25 +1133,27 @@ def render_leadership_page() -> None:
         row2_col3.metric("Review pressure", f"{manager['review_pressure_pct']:.1f}%")
         row2_col4.metric("Work in progress", manager["work_in_progress_items"])
 
+        row3_col1, row3_col2, row3_col3, row3_col4 = st.columns(4)
+        row3_col1.metric("Progress by story count", f"{manager['progress_by_story_count_pct']:.1f}%")
+        row3_col2.metric("Progress by story points", f"{manager['progress_by_story_points_pct']:.1f}%")
+        row3_col3.metric("Completed children", manager["completed_children"])
+        row3_col4.metric("Blocked child items", manager["blocked_children_of_assigned_items"])
+
         manager_frame = pd.DataFrame(
-            {
-                "value": [
-                    manager["remaining_story_points"],
-                    manager["forecast_delivered_story_points"],
-                    manager["scope_at_risk_story_points"],
-                    manager["open_pr_count"],
-                    manager["blocked_items"],
-                ]
-            },
-            index=[
-                "Remaining SP",
-                "Forecast delivered SP",
-                "Scope at risk SP",
-                "Open PRs",
-                "Blocked items",
-            ],
+            [
+                {"signal": "Remaining SP", "value": manager["remaining_story_points"], "tone": "warning"},
+                {"signal": "Forecast delivered SP", "value": manager["forecast_delivered_story_points"], "tone": "positive"},
+                {"signal": "Scope at risk SP", "value": manager["scope_at_risk_story_points"], "tone": "negative"},
+                {"signal": "Open PRs", "value": manager["open_pr_count"], "tone": "warning"},
+                {"signal": "Blocked items", "value": manager["blocked_items"], "tone": "negative"},
+            ]
         )
-        st.bar_chart(manager_frame)
+        render_semantic_bar_chart(
+            manager_frame,
+            label_column="signal",
+            value_column="value",
+            height=260,
+        )
 
     with assumptions_tab:
         assumptions_frame = pd.DataFrame(

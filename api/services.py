@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import json
 import re
+import subprocess
+import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -251,6 +254,65 @@ def _normalize_generated_at(value: Any) -> datetime | None:
         return parse_timestamp(value)
 
     return None
+
+
+def _resolve_observatory_refresh_script() -> Path:
+    candidate_paths = [
+        Path(__file__).resolve().parents[1] / "scripts" / "refresh_from_azure_agent.py",
+        Path.cwd().resolve() / "scripts" / "refresh_from_azure_agent.py",
+        Path("/app/scripts/refresh_from_azure_agent.py"),
+    ]
+
+    checked_paths: list[str] = []
+    for candidate in candidate_paths:
+        resolved = candidate.expanduser().resolve()
+        checked_paths.append(str(resolved))
+        if resolved.exists():
+            return resolved
+
+    raise FileNotFoundError(
+        "Observatory Azure refresh script not found. Checked: " + ", ".join(checked_paths)
+    )
+
+
+def refresh_tracking_from_azure_agent(
+    session: Session,
+    *,
+    source: str = "kl-observatory-dashboard",
+    notify: bool = False,
+) -> dict[str, Any]:
+    settings = get_settings()
+    refresh_script = _resolve_observatory_refresh_script()
+
+    command = [str(Path(sys.executable)), str(refresh_script), "--source", source]
+    if notify:
+        command.append("--notify")
+
+    completed = subprocess.run(
+        command,
+        cwd=str(settings.workspace_root),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    stdout = completed.stdout.strip()
+    stderr = completed.stderr.strip()
+    if completed.returncode != 0:
+        raise RuntimeError(stderr or stdout or "Azure agent refresh failed.")
+
+    agent_refresh = json.loads(stdout) if stdout else {
+        "source": source,
+        "command": command,
+        "stdout": "",
+        "stderr": "",
+        "returncode": 0,
+    }
+
+    sync_result = sync_tracking_data(session, tracking_root=settings.tracking_root)
+    sync_result["persisted"] = get_persisted_summary(session)
+    sync_result["agent_refresh"] = agent_refresh
+    return sync_result
 
 
 def sync_tracking_data(session: Session, tracking_root: Path | None = None) -> dict:

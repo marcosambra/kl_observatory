@@ -6,7 +6,12 @@ from fastapi import FastAPI
 
 from .config import get_settings
 from .database import SessionLocal, init_db
-from .services import build_tracking_overview, get_persisted_summary, sync_tracking_data
+from .services import (
+    build_tracking_overview,
+    get_persisted_summary,
+    refresh_tracking_from_azure_agent,
+    sync_tracking_data,
+)
 
 
 @asynccontextmanager
@@ -43,3 +48,9 @@ def sync() -> dict:
         sync_result = sync_tracking_data(session)
         sync_result["persisted"] = get_persisted_summary(session)
         return sync_result
+
+
+@app.post("/refresh/azure")
+def refresh_azure() -> dict:
+    with SessionLocal() as session:
+        return refresh_tracking_from_azure_agent(session)

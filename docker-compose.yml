@@ -23,6 +23,8 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://kl_observatory:kl_observatory@postgres:5432/kl_observatory
       TRACKING_ROOT: /workspace/AI_Tracking
+      WORKSPACE_ROOT: /workspace
+      KWIKLEDGERS_ROOT_DIR: /workspace
       API_BASE_URL: http://api:8000
     depends_on:
       postgres:
@@ -31,11 +33,12 @@ services:
       - "8000:8000"
     volumes:
       - ./api:/app/api
+      - ./scripts:/app/scripts
       - ./src:/app/src
+      - ../agent:/workspace/agent:ro
       - type: bind
         source: ${TRACKING_SOURCE_DIR:-../AI_Tracking}
         target: /workspace/AI_Tracking
-        read_only: true
         bind:
           create_host_path: true
 
@@ -55,6 +58,7 @@ services:
     volumes:
       - ./api:/app/api
       - ./dashboard:/app/dashboard:ro
+      - ./scripts:/app/scripts:ro
       - ./src:/app/src
       - ./.streamlit:/app/.streamlit:ro
       - type: bind

@@ -5,6 +5,7 @@ import runpy
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 
@@ -32,6 +33,21 @@ class ConfigTests(unittest.TestCase):
             discovered = config._discover_tracking_root(nested_root)
 
             self.assertEqual(discovered, tracking_root)
+
+    def test_workspace_root_is_discovered_from_parent_chain(self) -> None:
+        from api import config
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace_root = Path(temp_dir)
+            runner_path = workspace_root / "agent" / "scripts" / "run_daily_summary.py"
+            nested_root = workspace_root / "kl_observatory" / "dist"
+            runner_path.parent.mkdir(parents=True)
+            nested_root.mkdir(parents=True)
+            runner_path.write_text("# runner\n", encoding="utf-8")
+
+            discovered = config._discover_workspace_root(nested_root)
+
+            self.assertEqual(discovered, workspace_root)
 
 
 class BuilderTests(unittest.TestCase):
@@ -72,6 +88,49 @@ class DashboardRuntimeTests(unittest.TestCase):
         self.assertTrue(_logo_path().exists())
         self.assertEqual(_logo_path().name, "ambra.png")
 
+    def test_dashboard_semantic_tones_classify_statuses_and_pr_age(self) -> None:
+        from src.dashboard import _tone_for_label, _tone_for_pr_age
+
+        self.assertEqual(_tone_for_label("Blocked Desenvolvimento"), "negative")
+        self.assertEqual(_tone_for_label("Q.A."), "warning")
+        self.assertEqual(_tone_for_label("Done"), "positive")
+        self.assertEqual(_tone_for_pr_age(3), "positive")
+        self.assertEqual(_tone_for_pr_age(12), "warning")
+        self.assertEqual(_tone_for_pr_age(45), "negative")
+
+    def test_refresh_azure_via_api_formats_agent_refresh_message(self) -> None:
+        from src.dashboard import refresh_azure_via_api
+
+        class Response:
+            def raise_for_status(self) -> None:
+                return None
+
+            def json(self) -> dict[str, object]:
+                return {
+                    "usage_events_synced": 2,
+                    "sprint_metrics_synced": 3,
+                    "snapshots_synced": 1,
+                    "agent_refresh": {
+                        "stdout": "Resumo diario sincronizado para dev@kwikledgers.com com 2 itens e 1 bloqueios."
+                    },
+                }
+
+        with patch("src.dashboard.requests.post", return_value=Response()):
+            ok, message = refresh_azure_via_api("http://127.0.0.1:8000")
+
+        self.assertTrue(ok)
+        self.assertIn("Resumo diario sincronizado", message)
+        self.assertIn("Persisted: 2 usage events, 3 sprint rows, 1 snapshots.", message)
+
+    def test_dashboard_tracking_row_tone_marks_missing_and_derived(self) -> None:
+        import pandas as pd
+
+        from src.dashboard import _tracking_row_tone
+
+        self.assertEqual(_tracking_row_tone(pd.Series({"exists": "present"})), "positive")
+        self.assertEqual(_tracking_row_tone(pd.Series({"exists": "derived"})), "warning")
+        self.assertEqual(_tracking_row_tone(pd.Series({"exists": "missing"})), "negative")
+
     def test_mock_audit_signals_include_descriptions_and_rows(self) -> None:
         from src.mock_data import (
             build_metric_dictionary,
@@ -104,8 +163,21 @@ class DashboardRuntimeTests(unittest.TestCase):
                     "blocked_items": 1,
                     "open_prs": 3,
                     "user_stories": 4,
+                    "tasks_all_statuses": 6,
+                    "sprint_stories": 7,
+                    "children_of_assigned_items": 5,
+                    "blocked_children_of_assigned_items": 2,
                 },
                 "remaining_story_points": 3,
+                "project_progress": {
+                    "progress_percent_by_story_count": 42.9,
+                    "progress_percent_by_story_points": 38.5,
+                    "blocked_story_points": 5,
+                    "blocked_stories": 2,
+                },
+                "child_items_summary": {
+                    "completed_children": 2,
+                },
                 "open_prs": [
                     {"repository": "portal_backend", "age_days": 3},
                     {"repository": "portal_frontend", "age_days": 1},
@@ -130,8 +202,41 @@ class DashboardRuntimeTests(unittest.TestCase):
         self.assertEqual(metrics["tech_lead"]["planned_story_points"], 13.0)
         self.assertEqual(metrics["tech_lead"]["actual_spent_story_points"], 10.0)
         self.assertGreater(metrics["tech_lead"]["expected_spent_story_points"], 8.0)
+        self.assertEqual(metrics["tech_lead"]["blocked_story_points"], 5.0)
+        self.assertEqual(metrics["tech_lead"]["children_of_assigned_items"], 5)
         self.assertGreater(metrics["manager"]["forecast_delivered_story_points"], 12.0)
         self.assertGreater(metrics["manager"]["delivery_confidence_pct"], 0.0)
+        self.assertEqual(metrics["manager"]["progress_by_story_count_pct"], 42.9)
+
+    def test_leadership_metrics_use_live_sprint_dates_for_elapsed_burn(self) -> None:
+        from src.leadership_metrics import build_leadership_metrics
+        from src.mock_data import build_mock_leadership_assumptions
+
+        overview = {
+            "current_snapshot": {
+                "generated_at": "2026-07-06T00:00:00+00:00",
+                "remaining_story_points": 3,
+                "sprint_context": {
+                    "start_date": "2026-07-01T00:00:00+00:00",
+                    "finish_date": "2026-07-11T00:00:00+00:00",
+                },
+            },
+            "sprint_metrics": [
+                {"timestamp": "2026-07-01T10:00:00+00:00", "remaining_story_points": 13, "blocked_items": 0},
+                {"timestamp": "2026-07-06T10:00:00+00:00", "remaining_story_points": 3, "blocked_items": 0},
+            ],
+            "usage_events": [],
+        }
+
+        metrics = build_leadership_metrics(
+            overview,
+            build_mock_leadership_assumptions(),
+        )
+
+        self.assertEqual(metrics["assumptions"]["elapsed_source"], "sprint_context")
+        self.assertEqual(metrics["assumptions"]["sprint_elapsed_pct"], 0.5)
+        self.assertEqual(metrics["tech_lead"]["expected_spent_story_points"], 6.5)
+        self.assertEqual(metrics["manager"]["expected_completion_pct"], 50.0)
 
     def test_individual_metrics_calculate_personal_workload_and_support(self) -> None:
         from src.individual_metrics import build_individual_metrics
@@ -144,9 +249,19 @@ class DashboardRuntimeTests(unittest.TestCase):
                     "blocked_items": 1,
                     "open_prs": 2,
                     "user_stories": 3,
+                    "tasks_all_statuses": 5,
+                    "sprint_stories": 6,
+                    "children_of_assigned_items": 4,
+                    "blocked_children_of_assigned_items": 1,
+                    "tasks_by_state": {"Done": 2, "In Progress": 2, "Blocked": 1},
+                    "assigned_items_by_type": {"Task": 3, "Bug": 1},
                 },
                 "remaining_story_points": 6,
                 "remaining_work_hours": 18,
+                "child_items_summary": {
+                    "completed_children": 1,
+                    "open_children": 3,
+                },
                 "open_prs": [
                     {"repository": "portal_backend", "age_days": 3},
                     {"repository": "portal_frontend", "age_days": 1},
@@ -166,9 +281,13 @@ class DashboardRuntimeTests(unittest.TestCase):
 
         self.assertEqual(metrics["user_email"], "dev@kwikledgers.com")
         self.assertEqual(metrics["current"]["assigned_items"], 4)
+        self.assertEqual(metrics["current"]["tasks_all_statuses"], 5)
+        self.assertEqual(metrics["current"]["children_of_assigned_items"], 4)
         self.assertEqual(metrics["derived"]["recent_story_points_burn"], 3.0)
         self.assertEqual(metrics["derived"]["remaining_hours_per_item"], 4.5)
         self.assertEqual(metrics["derived"]["actions_per_session"], 1.5)
+        self.assertEqual(metrics["derived"]["task_completion_pct"], 40.0)
+        self.assertEqual(metrics["derived"]["child_blocker_pressure_pct"], 25.0)
 
     def test_metric_plan_maps_contract_to_saved_sources(self) -> None:
         from src.metric_plan import build_metric_implementation_plan
@@ -341,6 +460,48 @@ class ApiStatusTests(unittest.TestCase):
         self.assertIn("root", payload)
         self.assertIn("available", payload)
         self.assertIn("entries", payload)
+
+
+class AgentRefreshTests(unittest.TestCase):
+    def test_observatory_refresh_script_resolves_from_project_root(self) -> None:
+        from api.services import _resolve_observatory_refresh_script
+
+        resolved = _resolve_observatory_refresh_script()
+
+        self.assertTrue(resolved.exists())
+        self.assertEqual(resolved.name, "refresh_from_azure_agent.py")
+
+    def test_refresh_tracking_from_azure_agent_runs_runner_then_syncs(self) -> None:
+        from api.services import refresh_tracking_from_azure_agent
+
+        settings = SimpleNamespace(
+            workspace_root=Path("/workspace"),
+            tracking_root=Path("/workspace/AI_Tracking"),
+        )
+
+        completed = SimpleNamespace(
+            returncode=0,
+            stdout='{"source":"kl-observatory-dashboard","command":["python","runner"],"stdout":"Resumo diario sincronizado para dev@kwikledgers.com com 0 itens e 0 bloqueios.","stderr":"","returncode":0}',
+            stderr="",
+        )
+
+        with patch("api.services.get_settings", return_value=settings), patch(
+            "api.services._resolve_observatory_refresh_script",
+            return_value=Path("/workspace/kl_observatory/scripts/refresh_from_azure_agent.py"),
+        ), patch("api.services.subprocess.run", return_value=completed) as run_mock, patch(
+            "api.services.sync_tracking_data",
+            return_value={"usage_events_synced": 1, "sprint_metrics_synced": 1, "snapshots_synced": 1},
+        ) as sync_mock, patch(
+            "api.services.get_persisted_summary",
+            return_value={"usage_events_synced": 4},
+        ):
+            payload = refresh_tracking_from_azure_agent(object())
+
+        run_mock.assert_called_once()
+        sync_mock.assert_called_once()
+        self.assertEqual(payload["usage_events_synced"], 1)
+        self.assertEqual(payload["persisted"]["usage_events_synced"], 4)
+        self.assertIn("Resumo diario sincronizado", payload["agent_refresh"]["stdout"])
 
 
 if __name__ == "__main__":

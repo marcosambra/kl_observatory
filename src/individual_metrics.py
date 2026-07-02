@@ -7,18 +7,28 @@ from typing import Any
 def build_individual_metrics(overview: dict[str, Any]) -> dict[str, Any]:
     current_snapshot = overview.get("current_snapshot", {})
     counts = current_snapshot.get("counts", {}) if isinstance(current_snapshot, dict) else {}
+    child_summary = current_snapshot.get("child_items_summary", {}) if isinstance(current_snapshot, dict) else {}
     usage_events = overview.get("usage_events", [])
     sprint_metrics = _sorted_sprint_metrics(overview.get("sprint_metrics", []))
     open_prs = current_snapshot.get("open_prs", []) if isinstance(current_snapshot, dict) else []
+    task_states = counts.get("tasks_by_state", {}) if isinstance(counts.get("tasks_by_state", {}), dict) else {}
+    assigned_items_by_type = counts.get("assigned_items_by_type", {}) if isinstance(counts.get("assigned_items_by_type", {}), dict) else {}
 
     assigned_items = _safe_int(counts.get("assigned_items", 0))
     blocked_items = _safe_int(counts.get("blocked_items", 0))
     user_stories = _safe_int(counts.get("user_stories", 0))
     open_pr_count = _safe_int(counts.get("open_prs", len(open_prs)))
+    tasks_all_statuses = _safe_int(counts.get("tasks_all_statuses", 0))
+    sprint_stories = _safe_int(counts.get("sprint_stories", 0))
+    children_of_assigned_items = _safe_int(counts.get("children_of_assigned_items", 0))
+    blocked_children_of_assigned_items = _safe_int(counts.get("blocked_children_of_assigned_items", 0))
     remaining_story_points = _safe_float(current_snapshot.get("remaining_story_points", 0))
     remaining_work_hours = _safe_float(current_snapshot.get("remaining_work_hours", 0))
     actions_logged = sum(len(event.get("actions", [])) for event in usage_events)
     usage_sessions = len(usage_events)
+    completed_tasks = _count_completed_states(task_states)
+    completed_children = _safe_int(child_summary.get("completed_children", 0))
+    open_children = _safe_int(child_summary.get("open_children", 0))
 
     recent_story_points_burn = 0.0
     blocker_delta = 0
@@ -44,8 +54,14 @@ def build_individual_metrics(overview: dict[str, Any]) -> dict[str, Any]:
             "blocked_items": blocked_items,
             "user_stories": user_stories,
             "open_pr_count": open_pr_count,
+            "tasks_all_statuses": tasks_all_statuses,
+            "sprint_stories": sprint_stories,
+            "children_of_assigned_items": children_of_assigned_items,
+            "blocked_children_of_assigned_items": blocked_children_of_assigned_items,
             "remaining_story_points": remaining_story_points,
             "remaining_work_hours": remaining_work_hours,
+            "tasks_by_state": task_states,
+            "assigned_items_by_type": assigned_items_by_type,
         },
         "derived": {
             "blocker_pressure_pct": round(
@@ -64,6 +80,20 @@ def build_individual_metrics(overview: dict[str, Any]) -> dict[str, Any]:
                 remaining_story_points / assigned_items,
                 1,
             ) if assigned_items > 0 else remaining_story_points,
+            "task_completion_pct": round(
+                (completed_tasks / tasks_all_statuses) * 100,
+                1,
+            ) if tasks_all_statuses > 0 else 0.0,
+            "child_completion_pct": round(
+                (completed_children / children_of_assigned_items) * 100,
+                1,
+            ) if children_of_assigned_items > 0 else 0.0,
+            "child_blocker_pressure_pct": round(
+                (blocked_children_of_assigned_items / children_of_assigned_items) * 100,
+                1,
+            ) if children_of_assigned_items > 0 else 0.0,
+            "open_children": open_children,
+            "completed_tasks": completed_tasks,
             "usage_sessions": usage_sessions,
             "actions_logged": actions_logged,
             "actions_per_session": round(
@@ -100,3 +130,13 @@ def _safe_float(value: Any) -> float:
 
 def _safe_int(value: Any) -> int:
     return int(_safe_float(value))
+
+
+def _count_completed_states(task_states: dict[str, Any]) -> int:
+    completed_markers = ("done", "closed", "complete", "completed", "resolved")
+    total = 0
+    for state_name, value in task_states.items():
+        normalized = str(state_name).strip().lower()
+        if any(marker in normalized for marker in completed_markers):
+            total += _safe_int(value)
+    return total
