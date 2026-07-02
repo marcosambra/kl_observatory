@@ -62,7 +62,11 @@ def _safe_int(value: str) -> int:
     stripped = value.strip()
     if not stripped:
         return 0
-    return int(stripped)
+    try:
+        return int(stripped)
+    except ValueError:
+        normalized = stripped.replace(",", ".")
+        return int(float(normalized))
 
 
 def parse_ai_usage_log(markdown: str) -> list[UsageEventRecord]:

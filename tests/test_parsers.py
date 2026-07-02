@@ -25,6 +25,18 @@ Acoes executadas:
 """
 
 
+USAGE_SAMPLE_WITH_DECIMAL_STORY_POINTS = """# AI Usage Metrics Log
+
+## 2026-07-02 12:00:12Z - Resumo diario agendado
+
+Resumo: Resumo do sprint com story points formatados como decimal.
+Story points restantes: 34.0
+Itens bloqueados: 0
+Acoes executadas:
+- scheduled_daily_summary
+"""
+
+
 SPRINT_SAMPLE = """# Sprint Metrics Snapshot
 
 | Data | Story Points Restantes | Itens Bloqueados | Resumo |
@@ -67,6 +79,13 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(len(records), 1)
         self.assertEqual(records[0].blocked_items, 0)
         self.assertEqual(records[0].summary, "Live Azure summary synced into local tracking outputs during validation.")
+
+    def test_parse_ai_usage_log_accepts_decimal_story_points(self) -> None:
+        records = parse_ai_usage_log(USAGE_SAMPLE_WITH_DECIMAL_STORY_POINTS)
+
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0].remaining_story_points, 34)
+        self.assertEqual(records[0].blocked_items, 0)
 
     def test_load_current_sprint_reads_counts(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from src.tracking_insights import build_metric_dictionary_entries
+
 
 def build_mock_leadership_assumptions() -> dict[str, float]:
     return {
@@ -252,6 +254,41 @@ def build_metric_dictionary() -> list[dict[str, str]]:
             "importance": "Compresses several execution risks into one management-friendly indicator.",
         },
         {
+            "group": "Individual metric",
+            "name": "Remaining work hours per item",
+            "status": "Derived",
+            "meaning": "Remaining work hours divided by the current assigned item count for the active developer.",
+            "importance": "Shows whether the developer load is concentrated in a few heavy items or spread across smaller tasks.",
+        },
+        {
+            "group": "Individual metric",
+            "name": "Blocker pressure",
+            "status": "Derived",
+            "meaning": "Blocked items as a percentage of the active developer's assigned items.",
+            "importance": "Highlights when personal execution risk is driven more by blocked work than by raw workload size.",
+        },
+        {
+            "group": "Individual metric",
+            "name": "Review load per item",
+            "status": "Derived",
+            "meaning": "Open pull requests divided by assigned items for the active developer snapshot.",
+            "importance": "Helps a developer judge whether review overhead is stealing time from delivery.",
+        },
+        {
+            "group": "Individual metric",
+            "name": "Recent story point burn",
+            "status": "Derived",
+            "meaning": "Decrease in remaining story points between the two latest sprint metric snapshots.",
+            "importance": "A quick personal momentum signal for whether the saved sprint state moved forward recently.",
+        },
+        {
+            "group": "Individual metric",
+            "name": "Actions per session",
+            "status": "Derived",
+            "meaning": "Logged AI actions divided by recorded usage sessions for the active developer context.",
+            "importance": "Useful for understanding whether the agent is being used as quick support or as a heavier operational assistant.",
+        },
+        {
             "group": "Mock audit signal",
             "name": "MCP Tool Reliability",
             "status": "Mock",
@@ -279,4 +316,4 @@ def build_metric_dictionary() -> list[dict[str, str]]:
             "meaning": "Coverage of required evidence sources for high-risk agent workflows.",
             "importance": "Lets us audit whether the agent followed its operating contract before answering or writing.",
         },
-    ]
+    ] + build_metric_dictionary_entries()

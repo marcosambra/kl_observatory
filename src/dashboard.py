@@ -10,13 +10,16 @@ import requests
 import streamlit as st
 
 from api.config import Settings, get_settings
+from src.individual_metrics import build_individual_metrics
 from src.leadership_metrics import build_leadership_metrics
+from src.metric_plan import build_metric_implementation_plan
 from api.services import build_tracking_overview
 from src.mock_data import (
     build_metric_dictionary,
     build_mock_audit_signals,
     build_mock_leadership_assumptions,
 )
+from src.tracking_insights import build_tracking_insights
 
 
 DashboardState = dict[str, Any]
@@ -58,16 +61,24 @@ def format_timestamp(value: str | None) -> str:
 def load_dashboard_state() -> DashboardState:
     settings = get_settings()
     overview, source_label = load_overview(settings.api_base_url)
+    individual_metrics = build_individual_metrics(overview)
     leadership_metrics = build_leadership_metrics(
         overview,
         build_mock_leadership_assumptions(),
     )
+    metric_plan = build_metric_implementation_plan(
+        overview.get("tracking_status", {}),
+    )
+    tracking_insights = build_tracking_insights(overview)
     return {
         "settings": settings,
         "overview": overview,
         "source_label": source_label,
         "persisted": overview.get("persisted"),
+        "individual_metrics": individual_metrics,
         "leadership_metrics": leadership_metrics,
+        "metric_plan": metric_plan,
+        "tracking_insights": tracking_insights,
         "mock_signals": build_mock_audit_signals(),
         "metric_dictionary": build_metric_dictionary(),
     }
@@ -168,10 +179,20 @@ def render_tracking_status(overview: dict[str, Any]) -> None:
     entries = tracking_status.get("entries", [])
     if entries:
         status_frame = pd.DataFrame(entries)
-        status_frame["exists"] = status_frame["exists"].map(
-            lambda value: "present" if value else "missing"
-        )
+        if "state" in status_frame:
+            status_frame["exists"] = status_frame["state"]
+            status_frame = status_frame.drop(columns=["state"])
+        else:
+            status_frame["exists"] = status_frame["exists"].map(
+                lambda value: "present" if value else "missing"
+            )
         st.dataframe(status_frame, use_container_width=True, hide_index=True)
+
+    current_snapshot = overview.get("current_snapshot", {})
+    if current_snapshot.get("snapshot_source") == "derived_from_metrics":
+        st.info(
+            "`current-sprint.json` is missing, so the observatory is using a derived sprint snapshot reconstructed from `sprint-metrics.md` and `ai-usage-log.md`."
+        )
 
     missing_paths = tracking_status.get("missing_paths", [])
     if not missing_paths:
@@ -185,15 +206,20 @@ def render_tracking_status(overview: dict[str, Any]) -> None:
     )
 def render_metrics(
     overview: dict[str, Any],
+    individual_metrics: dict[str, Any],
     leadership_metrics: dict[str, Any],
+    tracking_insights: dict[str, Any],
 ) -> None:
     current_snapshot = overview.get("current_snapshot", {})
     counts = current_snapshot.get("counts", {})
     usage_events = overview.get("usage_events", [])
     actions_logged = sum(len(event.get("actions", [])) for event in usage_events)
+    individual_current = individual_metrics["current"]
+    individual_derived = individual_metrics["derived"]
     tech_lead = leadership_metrics["tech_lead"]
     manager = leadership_metrics["manager"]
     assumptions = leadership_metrics["assumptions"]
+    insight_headline = tracking_insights["headline"]
 
     st.subheader("Operational Snapshot")
     st.write(
@@ -235,6 +261,30 @@ def render_metrics(
         f"{manager['delivery_confidence_pct']:.1f}%",
         delta=f"Forecast {manager['forecast_delivered_story_points']:.1f} SP",
     )
+
+    col13, col14, col15, col16 = st.columns(4)
+    col13.metric("Remaining work hours", individual_current["remaining_work_hours"])
+    col14.metric(
+        "Hours per item",
+        individual_derived["remaining_hours_per_item"],
+        delta=f"{individual_current['assigned_items']} assigned",
+    )
+    col15.metric(
+        "Blocker pressure",
+        f"{individual_derived['blocker_pressure_pct']:.1f}%",
+        delta=f"{individual_current['blocked_items']} blocked",
+    )
+    col16.metric(
+        "Recent SP burn",
+        individual_derived["recent_story_points_burn"],
+        delta=f"{individual_derived['blocker_delta']:+d} blocker delta",
+    )
+
+    col17, col18, col19, col20 = st.columns(4)
+    col17.metric("Hours saved/mo", insight_headline["hours_saved_per_month"])
+    col18.metric("AI impact index", f"{insight_headline['impact_index_pct']:.2f}%")
+    col19.metric("Debt items tracked", insight_headline["technical_debt_items"])
+    col20.metric("MCP audit errors", insight_headline["audit_errors"])
 
 
 def render_sprint_history(overview: dict[str, Any]) -> None:
@@ -325,7 +375,9 @@ def render_overview_page() -> None:
     state = get_dashboard_state()
     overview = cast(dict[str, Any], state["overview"])
     persisted = cast(dict[str, Any] | None, state.get("persisted"))
+    individual_metrics = cast(dict[str, Any], state["individual_metrics"])
     leadership_metrics = cast(dict[str, Any], state["leadership_metrics"])
+    tracking_insights = cast(dict[str, Any], state["tracking_insights"])
 
     render_page_header(
         "Operations Overview",
@@ -341,10 +393,10 @@ def render_overview_page() -> None:
         )
 
     render_tracking_status(overview)
-    render_metrics(overview, leadership_metrics)
+    render_metrics(overview, individual_metrics, leadership_metrics, tracking_insights)
 
-    sprint_tab, usage_tab, pr_tab, log_tab, leadership_tab = st.tabs(
-        ["Sprint", "Agent Usage", "Pull Requests", "Daily Logs", "Leadership"]
+    sprint_tab, usage_tab, pr_tab, log_tab, developer_tab, leadership_tab = st.tabs(
+        ["Sprint", "Agent Usage", "Pull Requests", "Daily Logs", "Developer", "Leadership"]
     )
 
     with sprint_tab:
@@ -355,8 +407,230 @@ def render_overview_page() -> None:
         render_open_prs(overview)
     with log_tab:
         render_daily_logs(overview)
+    with developer_tab:
+        render_individual_summary(individual_metrics)
     with leadership_tab:
         render_leadership_summary(leadership_metrics)
+
+
+def render_individual_summary(individual_metrics: dict[str, Any]) -> None:
+    current = individual_metrics["current"]
+    derived = individual_metrics["derived"]
+
+    st.subheader("Developer Snapshot")
+    st.write(
+        "These metrics stay focused on the active developer context saved in the current sprint snapshot and the AI usage log."
+    )
+
+    developer_frame = pd.DataFrame(
+        {
+            "value": [
+                current["remaining_story_points"],
+                current["remaining_work_hours"],
+                current["assigned_items"],
+                current["open_pr_count"],
+                derived["recent_story_points_burn"],
+            ]
+        },
+        index=[
+            "Remaining SP",
+            "Remaining hours",
+            "Assigned items",
+            "Open PRs",
+            "Recent SP burn",
+        ],
+    )
+    st.bar_chart(developer_frame)
+
+    row1_col1, row1_col2, row1_col3, row1_col4 = st.columns(4)
+    row1_col1.metric("Review load per item", derived["review_load_per_item"])
+    row1_col2.metric("Hours per item", derived["remaining_hours_per_item"])
+    row1_col3.metric("SP per item", derived["story_points_per_item"])
+    row1_col4.metric("Actions per session", derived["actions_per_session"])
+
+
+def render_individual_page() -> None:
+    state = get_dashboard_state()
+    individual_metrics = cast(dict[str, Any], state["individual_metrics"])
+    current = individual_metrics["current"]
+    derived = individual_metrics["derived"]
+
+    render_page_header(
+        "Individual Metrics",
+        "Developer-facing metrics for the active user saved in the current sprint snapshot and the AI tracking logs."
+    )
+
+    st.caption(f"Active developer: {individual_metrics['user_email']}")
+
+    workload_tab, support_tab = st.tabs(["Workload", "Agent Support"])
+
+    with workload_tab:
+        row1_col1, row1_col2, row1_col3, row1_col4 = st.columns(4)
+        row1_col1.metric("Assigned items", current["assigned_items"])
+        row1_col2.metric("Blocked items", current["blocked_items"])
+        row1_col3.metric("Remaining SP", current["remaining_story_points"])
+        row1_col4.metric("Remaining work hours", current["remaining_work_hours"])
+
+        row2_col1, row2_col2, row2_col3, row2_col4 = st.columns(4)
+        row2_col1.metric("Blocker pressure", f"{derived['blocker_pressure_pct']:.1f}%")
+        row2_col2.metric("Review load per item", derived["review_load_per_item"])
+        row2_col3.metric("Hours per item", derived["remaining_hours_per_item"])
+        row2_col4.metric(
+            "Recent SP burn",
+            derived["recent_story_points_burn"],
+            delta=f"{derived['blocker_delta']:+d} blocker delta",
+        )
+
+    with support_tab:
+        row1_col1, row1_col2, row1_col3, row1_col4 = st.columns(4)
+        row1_col1.metric("Usage sessions", derived["usage_sessions"])
+        row1_col2.metric("Logged actions", derived["actions_logged"])
+        row1_col3.metric("Actions per session", derived["actions_per_session"])
+        row1_col4.metric("Open PRs", current["open_pr_count"])
+
+        support_frame = pd.DataFrame(
+            [
+                {
+                    "signal": "Latest agent touchpoint",
+                    "value": derived["latest_usage_timestamp"] or "n/a",
+                    "meaning": "Most recent AI usage event captured in the operational log.",
+                },
+                {
+                    "signal": "Latest agent activity",
+                    "value": derived["latest_usage_title"],
+                    "meaning": "Title of the last recorded AI support session for this workspace context.",
+                },
+            ]
+        )
+        st.dataframe(support_frame, use_container_width=True, hide_index=True)
+
+
+def render_metric_plan_page() -> None:
+    state = get_dashboard_state()
+    plan_rows = cast(list[dict[str, str]], state["metric_plan"])
+    tracking_status = cast(dict[str, Any], state["overview"]).get("tracking_status", {})
+
+    render_page_header(
+        "Metric Implementation Plan",
+        "Roadmap for expanding observatory metrics using the KwikLedgers agent contract and the files already saved under AI_Tracking."
+    )
+
+    st.write(
+        "This plan is grounded in the contract sections that already require daily summaries, sprint control files, AI usage metrics, blocker detection, and narrative logs."
+    )
+
+    if tracking_status:
+        source_frame = pd.DataFrame(tracking_status.get("entries", []))
+        if not source_frame.empty:
+            source_frame["exists"] = source_frame["exists"].map(
+                lambda value: "present" if value else "missing"
+            )
+            st.subheader("Current Saved Sources")
+            st.dataframe(source_frame, use_container_width=True, hide_index=True)
+
+    st.subheader("Implementation Roadmap")
+    st.dataframe(pd.DataFrame(plan_rows), use_container_width=True, hide_index=True)
+
+
+def render_tracking_artifacts_page() -> None:
+    state = get_dashboard_state()
+    overview = cast(dict[str, Any], state["overview"])
+    insights = cast(dict[str, Any], state["tracking_insights"])
+    optimization = overview.get("optimization_report", {})
+    storypoints = overview.get("storypoints_report", {})
+    repo_context = overview.get("repo_work_item_context", {})
+    audit_log = overview.get("audit_log", {})
+    current_sprint_markdown = overview.get("current_sprint_markdown", "")
+
+    render_page_header(
+        "AI_Tracking Knowledge",
+        "Metrics and context parsed from the full AI_Tracking surface, including optimization reports, sprint-impact reports, debt caches, and MCP audit logs."
+    )
+
+    headline = insights["headline"]
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Hours saved/mo", headline["hours_saved_per_month"])
+    col2.metric("Impact index", f"{headline['impact_index_pct']:.2f}%")
+    col3.metric("Preview cache entries", headline["preview_entries"])
+    col4.metric("Audit errors", headline["audit_errors"])
+
+    reports_tab, debt_tab, audit_tab, snapshot_tab = st.tabs(
+        ["Reports", "Debt Context", "Audit Log", "Task Control"]
+    )
+
+    with reports_tab:
+        optimization_metrics = optimization.get("metrics", {})
+        storypoint_metrics = storypoints.get("metrics", {})
+
+        st.subheader("Optimization Report Metrics")
+        st.dataframe(
+            pd.DataFrame(
+                [
+                    {"metric": key, "value": value}
+                    for key, value in optimization_metrics.items()
+                ]
+            ),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+        st.subheader("Story Point Impact Metrics")
+        st.dataframe(
+            pd.DataFrame(
+                [
+                    {"metric": key, "value": value}
+                    for key, value in storypoint_metrics.items()
+                ]
+            ),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+    with debt_tab:
+        preview_summary = repo_context.get("preview_summary", {})
+        debt_summary = repo_context.get("technical_debt_summary", {})
+
+        st.subheader("Technical Debt Cache")
+        state_counts = debt_summary.get("state_counts", {})
+        if state_counts:
+            st.bar_chart(pd.DataFrame({"count": list(state_counts.values())}, index=list(state_counts.keys())))
+
+        st.dataframe(
+            pd.DataFrame(debt_summary.get("files", [])),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+        st.subheader("Technical Debt Preview Cache")
+        st.dataframe(
+            pd.DataFrame(preview_summary.get("files", [])),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+    with audit_tab:
+        st.subheader("MCP Audit Summary")
+        st.dataframe(
+            pd.DataFrame(
+                [
+                    {"metric": key, "value": value}
+                    for key, value in audit_log.get("summary", {}).items()
+                ]
+            ),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+        tail_lines = audit_log.get("tail", [])
+        if tail_lines:
+            st.subheader("Recent Audit Entries")
+            st.code("\n".join(tail_lines[-40:]), language="text")
+
+    with snapshot_tab:
+        if current_sprint_markdown:
+            st.markdown(current_sprint_markdown)
+        else:
+            st.info("No current sprint markdown snapshot is available yet.")
 
 
 def render_leadership_summary(leadership_metrics: dict[str, Any]) -> None:
@@ -585,9 +859,24 @@ def main() -> None:
                 icon=":material/insights:",
             ),
             st.Page(
+                render_individual_page,
+                title="Individual Metrics",
+                icon=":material/person:",
+            ),
+            st.Page(
                 render_audit_signals_page,
                 title="Audit Signals",
                 icon=":material/gavel:",
+            ),
+            st.Page(
+                render_tracking_artifacts_page,
+                title="AI_Tracking Knowledge",
+                icon=":material/hub:",
+            ),
+            st.Page(
+                render_metric_plan_page,
+                title="Metric Implementation Plan",
+                icon=":material/schema:",
             ),
             st.Page(
                 render_dictionary_page,
