@@ -6,8 +6,8 @@ import pandas as pd
 import requests
 import streamlit as st
 
-from .config import get_settings
-from .services import build_tracking_overview
+from api.config import get_settings
+from api.services import build_tracking_overview
 
 
 def inject_styles() -> None:
@@ -70,6 +70,34 @@ def format_timestamp(value: str | None) -> str:
 
     parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     return parsed.strftime("%Y-%m-%d %H:%M UTC")
+
+
+def render_tracking_status(overview: dict) -> None:
+    tracking_status = overview.get("tracking_status", {})
+    if not tracking_status:
+        return
+
+    st.subheader("Tracking Status")
+    st.caption(f"Effective tracking root: {tracking_status.get('root', 'n/a')}")
+
+    entries = tracking_status.get("entries", [])
+    if entries:
+        status_frame = pd.DataFrame(entries)
+        status_frame["exists"] = status_frame["exists"].map(
+            lambda value: "present" if value else "missing"
+        )
+        st.dataframe(status_frame, use_container_width=True, hide_index=True)
+
+    missing_paths = tracking_status.get("missing_paths", [])
+    if not missing_paths:
+        return
+
+    missing_list = "\n".join(f"- {path}" for path in missing_paths)
+    st.warning(
+        "Some AI_Tracking inputs are missing. The observatory will show partial or empty data until the bind mount points at a populated tracking directory.\n\n"
+        f"Tracking root: {tracking_status.get('root', 'n/a')}\n\n"
+        f"Missing paths:\n{missing_list}"
+    )
 
 
 def render_metrics(overview: dict) -> None:
@@ -212,6 +240,7 @@ def main() -> None:
             f"{persisted['snapshots_synced']} snapshots."
         )
 
+    render_tracking_status(overview)
     render_metrics(overview)
     render_sprint_history(overview)
     render_usage_events(overview)

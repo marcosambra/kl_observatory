@@ -4,7 +4,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from .config import get_settings
-from .models import Base
+from src.models import Base
 
 
 engine = create_engine(

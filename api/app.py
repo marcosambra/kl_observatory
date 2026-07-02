@@ -31,6 +31,12 @@ def overview() -> dict:
         return tracking_overview
 
 
+@app.get("/status")
+def status() -> dict:
+    tracking_overview = build_tracking_overview(log_limit=0)
+    return tracking_overview["tracking_status"]
+
+
 @app.post("/sync")
 def sync() -> dict:
     with SessionLocal() as session:

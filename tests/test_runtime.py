@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 class ConfigTests(unittest.TestCase):
     def test_default_database_url_uses_sqlite_file(self) -> None:
-        from src import config
+        from api import config
 
         with tempfile.TemporaryDirectory() as temp_dir:
             runtime_root = Path(temp_dir)
@@ -20,7 +20,7 @@ class ConfigTests(unittest.TestCase):
             self.assertTrue((runtime_root / "var").exists())
 
     def test_tracking_root_is_discovered_from_parent_chain(self) -> None:
-        from src import config
+        from api import config
 
         with tempfile.TemporaryDirectory() as temp_dir:
             workspace_root = Path(temp_dir)
@@ -54,12 +54,45 @@ class BuilderTests(unittest.TestCase):
 
 
 class DashboardRuntimeTests(unittest.TestCase):
+    def test_top_level_api_package_exports_fastapi_app(self) -> None:
+        module = importlib.import_module("api")
+
+        self.assertTrue(hasattr(module, "app"))
+
     def test_streamlit_wrapper_imports_dashboard_module(self) -> None:
-        wrapper_path = Path(__file__).resolve().parents[1] / "streamlit_app.py"
+        wrapper_path = Path(__file__).resolve().parents[1] / "dashboard" / "streamlit_app.py"
 
         globals_dict = runpy.run_path(str(wrapper_path))
 
         self.assertIn("main", globals_dict)
+
+
+class TrackingOverviewTests(unittest.TestCase):
+    def test_build_tracking_overview_handles_missing_tracking_root(self) -> None:
+        from api.services import build_tracking_overview
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            missing_root = Path(temp_dir) / "AI_Tracking"
+
+            overview = build_tracking_overview(tracking_root=missing_root)
+
+        self.assertEqual(overview["usage_events"], [])
+        self.assertEqual(overview["sprint_metrics"], [])
+        self.assertEqual(overview["current_snapshot"], {})
+        self.assertFalse(overview["tracking_status"]["available"])
+        self.assertGreaterEqual(len(overview["tracking_status"]["missing_paths"]), 4)
+        self.assertEqual(len(overview["tracking_status"]["entries"]), 4)
+
+
+class ApiStatusTests(unittest.TestCase):
+    def test_status_route_returns_tracking_status(self) -> None:
+        from api.app import status
+
+        payload = status()
+
+        self.assertIn("root", payload)
+        self.assertIn("available", payload)
+        self.assertIn("entries", payload)
 
 
 if __name__ == "__main__":

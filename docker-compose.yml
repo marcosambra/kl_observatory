@@ -16,8 +16,10 @@ services:
       - postgres_data:/var/lib/postgresql/data
 
   api:
-    build: .
-    command: poetry run uvicorn src.api:app --host 0.0.0.0 --port 8000
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.api
+    command: poetry run uvicorn api:app --host 0.0.0.0 --port 8000
     environment:
       DATABASE_URL: postgresql+psycopg://kl_observatory:kl_observatory@postgres:5432/kl_observatory
       TRACKING_ROOT: /workspace/AI_Tracking
@@ -28,12 +30,20 @@ services:
     ports:
       - "8000:8000"
     volumes:
+      - ./api:/app/api
       - ./src:/app/src
-      - ../AI_Tracking:/workspace/AI_Tracking:ro
+      - type: bind
+        source: ${TRACKING_SOURCE_DIR:-../AI_Tracking}
+        target: /workspace/AI_Tracking
+        read_only: true
+        bind:
+          create_host_path: true
 
   dashboard:
-    build: .
-    command: poetry run streamlit run streamlit_app.py --server.address 0.0.0.0 --server.port 8501
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.streamlit
+    command: poetry run streamlit run dashboard/streamlit_app.py --server.address 0.0.0.0 --server.port 8501
     environment:
       API_BASE_URL: http://api:8000
       TRACKING_ROOT: /workspace/AI_Tracking
@@ -43,10 +53,16 @@ services:
     ports:
       - "8501:8501"
     volumes:
+      - ./api:/app/api
+      - ./dashboard:/app/dashboard:ro
       - ./src:/app/src
-      - ./streamlit_app.py:/app/streamlit_app.py:ro
       - ./.streamlit:/app/.streamlit:ro
-      - ../AI_Tracking:/workspace/AI_Tracking:ro
+      - type: bind
+        source: ${TRACKING_SOURCE_DIR:-../AI_Tracking}
+        target: /workspace/AI_Tracking
+        read_only: true
+        bind:
+          create_host_path: true
 
 volumes:
   postgres_data:

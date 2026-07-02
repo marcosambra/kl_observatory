@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from kl_observatory.parsers import (
+from src.parsers import (
     load_current_sprint,
     parse_ai_usage_log,
     parse_sprint_metrics,

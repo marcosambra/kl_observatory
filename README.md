@@ -31,6 +31,13 @@ poetry install
 docker compose up --build
 ```
 
+If `AI_Tracking` lives somewhere else on your machine, point Docker at it with
+`TRACKING_SOURCE_DIR`:
+
+```bash
+TRACKING_SOURCE_DIR=/absolute/path/to/AI_Tracking docker compose up --build
+```
+
 Services:
 
 - Streamlit: `http://localhost:8501`
@@ -41,8 +48,8 @@ Services:
 
 ```bash
 poetry install
-poetry run uvicorn src.api:app --host 0.0.0.0 --port 8000
-poetry run streamlit run streamlit_app.py
+poetry run uvicorn api:app --host 0.0.0.0 --port 8000
+poetry run streamlit run dashboard/streamlit_app.py
 ```
 
 ## Unified Launcher
@@ -88,6 +95,9 @@ Notes:
 ## Notes
 
 - The dashboard can fall back to direct file reads if the API is unavailable.
+- If the Docker bind source is missing or empty, the API and dashboard now stay
+  up and show a tracking warning instead of crashing. Populate
+  `TRACKING_SOURCE_DIR` to remove the warning.
 - The folder is scaffolded to live as its own repository. Wire it into the
   parent repository as a formal git submodule once the remote repository URL is
   defined.

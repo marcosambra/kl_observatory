@@ -12,6 +12,8 @@ import requests
 import uvicorn
 from streamlit.web.bootstrap import load_config_options
 from streamlit.web.bootstrap import run as run_streamlit
+from api.app import app
+
 
 
 def _resource_base() -> Path:
@@ -23,9 +25,9 @@ def _resource_base() -> Path:
 
 def _dashboard_script_path() -> Path:
     if getattr(sys, "frozen", False):
-        return _resource_base() / "kl_observatory_resources" / "streamlit_app.py"
+        return _resource_base() / "kl_observatory_resources" / "dashboard" / "streamlit_app.py"
 
-    return Path(__file__).resolve().parents[1] / "streamlit_app.py"
+    return Path(__file__).resolve().parents[1] / "dashboard" / "streamlit_app.py"
 
 
 def _parse_args() -> argparse.Namespace:
@@ -58,8 +60,6 @@ def _wait_for_api(api_base_url: str, timeout_seconds: float = 20.0) -> None:
 
 
 def _start_api_server(host: str, api_port: int, log_level: str) -> tuple[uvicorn.Server, threading.Thread]:
-    from src.api import app
-
     config = uvicorn.Config(
         app,
         host=host,
