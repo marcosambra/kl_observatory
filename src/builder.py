@@ -24,6 +24,7 @@ def main() -> None:
 
     args = _parse_args()
     project_root = Path(__file__).resolve().parents[1]
+    assets_path = project_root / "assets"
     launcher_path = project_root / "src" / "launcher.py"
     streamlit_entry_path = project_root / "dashboard" / "streamlit_app.py"
     streamlit_config_path = project_root / ".streamlit" / "config.toml"
@@ -39,6 +40,7 @@ def main() -> None:
         f"--specpath={build_root}",
         f"--add-data={_add_data_argument(streamlit_entry_path, 'kl_observatory_resources/dashboard')}",
         f"--add-data={_add_data_argument(streamlit_config_path, '.streamlit')}",
+        f"--add-data={_add_data_argument(assets_path, 'kl_observatory_resources/assets')}",
         "--collect-all=streamlit",
         "--collect-all=altair",
         "--collect-all=pyarrow",

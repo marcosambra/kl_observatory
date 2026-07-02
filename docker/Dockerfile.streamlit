@@ -15,6 +15,7 @@ COPY api ./api
 COPY dashboard ./dashboard
 COPY src ./src
 COPY .streamlit ./.streamlit
+COPY assets ./assets
 
 RUN poetry install --only main --no-interaction --no-ansi
 

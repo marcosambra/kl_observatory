@@ -10,12 +10,27 @@ It also ships with a native launcher that starts both FastAPI and Streamlit in
 one process tree, plus a Poetry build command that produces the native
 executable for the current operating system.
 
+The dashboard now uses native Streamlit layout primitives and built-in page
+navigation rather than injected HTML. The visual theme lives in
+`.streamlit/config.toml`.
+
 ## What It Shows
 
 - agent usage events captured in `AI_Tracking/Metrics/ai-usage-log.md`
 - sprint history captured in `AI_Tracking/Metrics/sprint-metrics.md`
 - current sprint snapshot from `AI_Tracking/Task_Control/current-sprint.json`
 - recent daily action logs from `AI_Tracking/Daily_Action_Logs/`
+- mocked audit telemetry for MCP tool reliability, approval guardrails,
+  tracking freshness, and decision traceability coverage
+
+## Dashboard Pages
+
+- `Operations Overview`: live AI_Tracking metrics for sprint movement, usage,
+  PR pressure, and daily logs
+- `Audit Signals`: first-iteration mocked audit datasets that define the next
+  telemetry the dev agent should emit
+- `Metric Dictionary`: explanation of what each live and mocked metric means
+  and why it matters for auditing the MCP stack and agent behavior
 
 ## Stack
 
@@ -98,6 +113,9 @@ Notes:
 - If the Docker bind source is missing or empty, the API and dashboard now stay
   up and show a tracking warning instead of crashing. Populate
   `TRACKING_SOURCE_DIR` to remove the warning.
+- The audit datasets are intentionally mocked in the first iteration so the
+  observatory can document the desired MCP and agent telemetry before the live
+  emitters are wired in.
 - The folder is scaffolded to live as its own repository. Wire it into the
   parent repository as a formal git submodule once the remote repository URL is
   defined.
