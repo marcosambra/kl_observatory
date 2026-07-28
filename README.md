@@ -128,6 +128,7 @@ Notes:
   up and show a tracking warning instead of crashing. Populate
   `TRACKING_SOURCE_DIR` to remove the warning.
 - LangGraph runtime CLIs can now emit minimal execution telemetry into `AI_Tracking/Metrics/ai-usage-log.md`; the observatory parses these `runtime:*` entries and exposes flow/status usage without requiring a new transport or schema.
+- The Operations Overview now highlights runtime flow distribution, final status distribution, and recent runtime executions directly from those `runtime:*` usage events.
 - The audit datasets are intentionally mocked in the first iteration so the
   observatory can document the desired MCP and agent telemetry before the live
   emitters are wired in.

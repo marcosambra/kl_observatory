@@ -623,6 +623,43 @@ def render_usage_events(overview: dict[str, Any]) -> None:
                 height=260,
             )
 
+    runtime_frame = dataframe[dataframe["runtime_flow_name"].astype(str).str.len() > 0].copy()
+    if not runtime_frame.empty:
+        flow_column, status_column = st.columns(2)
+        with flow_column:
+            st.subheader("Runtime Final Status")
+            status_counts = (
+                runtime_frame.groupby("runtime_final_status")
+                .size()
+                .reset_index(name="events")
+            )
+            status_counts["tone"] = status_counts["runtime_final_status"].apply(
+                lambda value: "negative"
+                if str(value).strip().lower() in {"failed", "preview_failed", "execute_failed", "invalid_transition"}
+                else ("positive" if str(value).strip().lower() == "completed" else "warning")
+            )
+            render_semantic_bar_chart(
+                status_counts,
+                label_column="runtime_final_status",
+                value_column="events",
+                height=240,
+            )
+        with status_column:
+            st.subheader("Recent Runtime Executions")
+            recent_runtime_frame = runtime_frame[
+                [
+                    "timestamp",
+                    "runtime_flow_name",
+                    "runtime_final_status",
+                    "runtime_source",
+                    "runtime_run_id",
+                ]
+            ].sort_values("timestamp", ascending=False)
+            render_styled_dataframe(
+                recent_runtime_frame.head(8),
+                tone_resolver=_usage_event_row_tone,
+            )
+
 
 def render_open_prs(overview: dict[str, Any]) -> None:
     current_snapshot = overview.get("current_snapshot", {})
