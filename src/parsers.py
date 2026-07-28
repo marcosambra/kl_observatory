@@ -22,6 +22,11 @@ class UsageEventRecord:
     remaining_story_points: int
     blocked_items: int
     actions: list[str] = field(default_factory=list)
+    runtime_flow_name: str = ""
+    runtime_final_status: str = ""
+    runtime_source: str = ""
+    runtime_run_id: str = ""
+    runtime_correlation_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -60,7 +65,7 @@ def parse_timestamp(value: str) -> datetime:
 
 def _safe_int(value: str) -> int:
     stripped = value.strip()
-    if not stripped:
+    if not stripped or stripped == "-":
         return 0
     try:
         return int(stripped)
@@ -101,6 +106,11 @@ def parse_ai_usage_log(markdown: str) -> list[UsageEventRecord]:
                 "remaining_story_points": 0,
                 "blocked_items": 0,
                 "actions": [],
+                "runtime_flow_name": "",
+                "runtime_final_status": "",
+                "runtime_source": "",
+                "runtime_run_id": "",
+                "runtime_correlation_id": "",
             }
             collecting_actions = False
             continue
@@ -128,7 +138,20 @@ def parse_ai_usage_log(markdown: str) -> list[UsageEventRecord]:
             continue
 
         if collecting_actions and line.startswith("- "):
-            current["actions"].append(line[2:].strip())
+            action = line[2:].strip()
+            current["actions"].append(action)
+            if action.startswith("source="):
+                current["runtime_source"] = action.split("=", 1)[1].strip()
+            elif action.startswith("run_id="):
+                current["runtime_run_id"] = action.split("=", 1)[1].strip()
+            elif action.startswith("correlation_id="):
+                current["runtime_correlation_id"] = action.split("=", 1)[1].strip()
+
+        if current["title"].startswith("runtime:"):
+            runtime_parts = current["title"].split(":", 2)
+            if len(runtime_parts) == 3:
+                current["runtime_flow_name"] = runtime_parts[1]
+                current["runtime_final_status"] = runtime_parts[2]
 
     if current is not None:
         records.append(
@@ -140,6 +163,11 @@ def parse_ai_usage_log(markdown: str) -> list[UsageEventRecord]:
                 remaining_story_points=current["remaining_story_points"],
                 blocked_items=current["blocked_items"],
                 actions=current["actions"],
+                runtime_flow_name=current["runtime_flow_name"],
+                runtime_final_status=current["runtime_final_status"],
+                runtime_source=current["runtime_source"],
+                runtime_run_id=current["runtime_run_id"],
+                runtime_correlation_id=current["runtime_correlation_id"],
             )
         )
 

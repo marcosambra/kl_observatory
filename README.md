@@ -20,13 +20,14 @@ navigation rather than injected HTML. The visual theme lives in
 - sprint history captured in `AI_Tracking/Metrics/sprint-metrics.md`
 - current sprint snapshot from `AI_Tracking/Task_Control/current-sprint.json`
 - recent daily action logs from `AI_Tracking/Daily_Action_Logs/`
+- structured LangGraph runtime usage signals derived from `runtime:*` events emitted into `AI_Tracking/Metrics/ai-usage-log.md`
 - mocked audit telemetry for MCP tool reliability, approval guardrails,
   tracking freshness, and decision traceability coverage
 
 ## Dashboard Pages
 
 - `Operations Overview`: live AI_Tracking metrics for sprint movement, usage,
-  PR pressure, and daily logs
+  PR pressure, LangGraph runtime usage, and daily logs
 - `Audit Signals`: first-iteration mocked audit datasets that define the next
   telemetry the dev agent should emit
 - `Metric Dictionary`: explanation of what each live and mocked metric means
@@ -126,6 +127,7 @@ Notes:
 - If the Docker bind source is missing or empty, the API and dashboard now stay
   up and show a tracking warning instead of crashing. Populate
   `TRACKING_SOURCE_DIR` to remove the warning.
+- LangGraph runtime CLIs can now emit minimal execution telemetry into `AI_Tracking/Metrics/ai-usage-log.md`; the observatory parses these `runtime:*` entries and exposes flow/status usage without requiring a new transport or schema.
 - The audit datasets are intentionally mocked in the first iteration so the
   observatory can document the desired MCP and agent telemetry before the live
   emitters are wired in.

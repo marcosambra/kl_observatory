@@ -16,6 +16,18 @@ def build_tracking_insights(tracking_payload: dict[str, Any]) -> dict[str, Any]:
     debt_summary = repo_context.get("technical_debt_summary", {})
     preview_summary = repo_context.get("preview_summary", {})
     audit_summary = audit.get("summary", {})
+    usage_events = tracking_payload.get("usage_events", [])
+    runtime_usage_events = [
+        event for event in usage_events
+        if str(event.get("runtime_flow_name") or "").strip()
+    ]
+    runtime_flow_counts: dict[str, int] = {}
+    runtime_status_counts: dict[str, int] = {}
+    for event in runtime_usage_events:
+        flow_name = str(event.get("runtime_flow_name") or "unknown")
+        final_status = str(event.get("runtime_final_status") or "unknown")
+        runtime_flow_counts[flow_name] = runtime_flow_counts.get(flow_name, 0) + 1
+        runtime_status_counts[final_status] = runtime_status_counts.get(final_status, 0) + 1
 
     return {
         "headline": {
@@ -26,6 +38,7 @@ def build_tracking_insights(tracking_payload: dict[str, Any]) -> dict[str, Any]:
             "technical_debt_items": debt_summary.get("total_items", 0),
             "preview_entries": preview_summary.get("total_preview_entries", 0),
             "audit_errors": audit_summary.get("error_entries", 0),
+            "runtime_usage_events": len(runtime_usage_events),
         },
         "optimization": optimization_metrics,
         "storypoints": storypoint_metrics,
@@ -34,6 +47,11 @@ def build_tracking_insights(tracking_payload: dict[str, Any]) -> dict[str, Any]:
             "preview_summary": preview_summary,
         },
         "audit": audit_summary,
+        "runtime_usage": {
+            "events": runtime_usage_events,
+            "flow_counts": runtime_flow_counts,
+            "status_counts": runtime_status_counts,
+        },
     }
 
 
@@ -73,6 +91,20 @@ def build_metric_dictionary_entries() -> list[dict[str, str]]:
             "status": "Live from audit log",
             "meaning": "Number of ERROR lines found in the MCP audit log snapshot the observatory can read.",
             "importance": "Provides a direct signal for integration failures across the agent and MCP surfaces.",
+        },
+        {
+            "group": "LangGraph runtime metric",
+            "name": "Runtime usage events",
+            "status": "Live from AI usage log",
+            "meaning": "Count of usage-log entries emitted directly by the LangGraph runtime CLIs using the runtime:* title pattern.",
+            "importance": "Shows whether the new runtime is already producing observable execution traces consumable by the observatory stack.",
+        },
+        {
+            "group": "LangGraph runtime metric",
+            "name": "Runtime flow distribution",
+            "status": "Live from AI usage log",
+            "meaning": "Breakdown of runtime events by flow name, such as daily summary, story PR, branch association, and story status transition.",
+            "importance": "Helps identify which LangGraph surfaces are actually being exercised in practice and where failures concentrate.",
         },
     ]
 

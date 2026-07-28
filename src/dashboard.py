@@ -263,8 +263,12 @@ def _sprint_metric_row_tone(row: pd.Series) -> str:
 def _usage_event_row_tone(row: pd.Series) -> str:
     if _safe_float(row.get("blocked_items", 0)) > 0:
         return "negative"
+    if str(row.get("runtime_final_status", "")).strip().lower() in {"failed", "preview_failed", "execute_failed", "invalid_transition"}:
+        return "negative"
     if _safe_float(row.get("actions_count", 0)) >= 3:
         return "positive"
+    if str(row.get("runtime_flow_name", "")).strip():
+        return "warning"
     return "neutral"
 
 
@@ -495,6 +499,17 @@ def render_metrics(
         delta=f"{manager['progress_by_story_points_pct']:.1f}% by SP",
     )
 
+    col25, col26 = st.columns(2)
+    col25.metric("LangGraph runtime events", insight_headline.get("runtime_usage_events", 0))
+    runtime_status_counts = tracking_insights.get("runtime_usage", {}).get("status_counts", {})
+    col26.metric(
+        "Runtime failure-like events",
+        runtime_status_counts.get("failed", 0)
+        + runtime_status_counts.get("preview_failed", 0)
+        + runtime_status_counts.get("execute_failed", 0)
+        + runtime_status_counts.get("invalid_transition", 0),
+    )
+
 
 def render_sprint_history(overview: dict[str, Any]) -> None:
     sprint_metrics = overview.get("sprint_metrics", [])
@@ -554,6 +569,10 @@ def render_usage_events(overview: dict[str, Any]) -> None:
     dataframe = pd.DataFrame(usage_events)
     dataframe["timestamp"] = pd.to_datetime(dataframe["timestamp"], utc=True)
     dataframe["actions_count"] = dataframe["actions"].apply(len)
+    if "runtime_flow_name" not in dataframe:
+        dataframe["runtime_flow_name"] = ""
+    if "runtime_final_status" not in dataframe:
+        dataframe["runtime_final_status"] = ""
 
     left_column, right_column = st.columns([1.2, 1])
     with left_column:
@@ -566,6 +585,8 @@ def render_usage_events(overview: dict[str, Any]) -> None:
                 [
                     "timestamp",
                     "title",
+                    "runtime_flow_name",
+                    "runtime_final_status",
                     "remaining_story_points",
                     "blocked_items",
                     "actions_count",
@@ -574,17 +595,33 @@ def render_usage_events(overview: dict[str, Any]) -> None:
             tone_resolver=_usage_event_row_tone,
         )
     with right_column:
-        chart_frame = dataframe[["title", "actions_count"]].copy()
-        chart_frame["tone"] = chart_frame["actions_count"].apply(
-            lambda value: "positive" if value >= 3 else ("warning" if value == 2 else "neutral")
-        )
-        st.subheader("Actions Per Event")
-        render_semantic_bar_chart(
-            chart_frame,
-            label_column="title",
-            value_column="actions_count",
-            height=260,
-        )
+        runtime_frame = dataframe[dataframe["runtime_flow_name"].astype(str).str.len() > 0].copy()
+        if runtime_frame.empty:
+            chart_frame = dataframe[["title", "actions_count"]].copy()
+            chart_frame["tone"] = chart_frame["actions_count"].apply(
+                lambda value: "positive" if value >= 3 else ("warning" if value == 2 else "neutral")
+            )
+            st.subheader("Actions Per Event")
+            render_semantic_bar_chart(
+                chart_frame,
+                label_column="title",
+                value_column="actions_count",
+                height=260,
+            )
+        else:
+            flow_counts = (
+                runtime_frame.groupby("runtime_flow_name")
+                .size()
+                .reset_index(name="events")
+            )
+            flow_counts["tone"] = "warning"
+            st.subheader("Runtime Events By Flow")
+            render_semantic_bar_chart(
+                flow_counts,
+                label_column="runtime_flow_name",
+                value_column="events",
+                height=260,
+            )
 
 
 def render_open_prs(overview: dict[str, Any]) -> None:

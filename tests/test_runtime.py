@@ -320,6 +320,18 @@ class DashboardRuntimeTests(unittest.TestCase):
                     "preview_summary": {"total_preview_entries": 4},
                 },
                 "audit_log": {"summary": {"error_entries": 3}},
+                "usage_events": [
+                    {
+                        "title": "runtime:story_pull_request:completed",
+                        "runtime_flow_name": "story_pull_request",
+                        "runtime_final_status": "completed",
+                    },
+                    {
+                        "title": "runtime:story_status_transition:execute_failed",
+                        "runtime_flow_name": "story_status_transition",
+                        "runtime_final_status": "execute_failed",
+                    },
+                ],
             }
         )
 
@@ -327,6 +339,9 @@ class DashboardRuntimeTests(unittest.TestCase):
         self.assertEqual(insights["headline"]["technical_debt_items"], 12)
         self.assertEqual(insights["headline"]["preview_entries"], 4)
         self.assertEqual(insights["headline"]["audit_errors"], 3)
+        self.assertEqual(insights["headline"]["runtime_usage_events"], 2)
+        self.assertEqual(insights["runtime_usage"]["flow_counts"]["story_pull_request"], 1)
+        self.assertEqual(insights["runtime_usage"]["status_counts"]["execute_failed"], 1)
 
     def test_tracking_overview_includes_extended_ai_tracking_surfaces(self) -> None:
         from api.services import build_tracking_overview

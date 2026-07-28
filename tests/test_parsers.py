@@ -37,11 +37,34 @@ Acoes executadas:
 """
 
 
+RUNTIME_USAGE_SAMPLE = """# AI Usage Metrics Log
+
+## 2026-07-28 01:22:00Z - runtime:story_status_transition:completed
+
+Resumo: Transicao concluida.
+Story points restantes: 0
+Itens bloqueados: 0
+Acoes executadas:
+- source=story-status-cli
+- run_id=run-123
+- correlation_id=corr-123
+- node=execute_status_transition status=completed
+"""
+
+
 SPRINT_SAMPLE = """# Sprint Metrics Snapshot
 
 | Data | Story Points Restantes | Itens Bloqueados | Resumo |
 |---|---:|---:|---|
 | 2026-07-01 16:34:20Z | 0 | 0 | Live Azure summary synced into local tracking outputs during validation. |
+"""
+
+
+SPRINT_SAMPLE_WITH_PLACEHOLDERS = """# Sprint Metrics Snapshot
+
+| Data | Story Points Restantes | Itens Bloqueados | Resumo |
+|---|---:|---:|---|
+| 2026-07-02 12:00:12Z | - | 0 | Metrics snapshot still pending story point sync. |
 """
 
 
@@ -80,12 +103,29 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(records[0].blocked_items, 0)
         self.assertEqual(records[0].summary, "Live Azure summary synced into local tracking outputs during validation.")
 
+    def test_parse_sprint_metrics_accepts_placeholder_story_points(self) -> None:
+        records = parse_sprint_metrics(SPRINT_SAMPLE_WITH_PLACEHOLDERS)
+
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0].remaining_story_points, 0)
+        self.assertEqual(records[0].blocked_items, 0)
+
     def test_parse_ai_usage_log_accepts_decimal_story_points(self) -> None:
         records = parse_ai_usage_log(USAGE_SAMPLE_WITH_DECIMAL_STORY_POINTS)
 
         self.assertEqual(len(records), 1)
         self.assertEqual(records[0].remaining_story_points, 34)
         self.assertEqual(records[0].blocked_items, 0)
+
+    def test_parse_ai_usage_log_extracts_langgraph_runtime_metadata(self) -> None:
+        records = parse_ai_usage_log(RUNTIME_USAGE_SAMPLE)
+
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0].runtime_flow_name, "story_status_transition")
+        self.assertEqual(records[0].runtime_final_status, "completed")
+        self.assertEqual(records[0].runtime_source, "story-status-cli")
+        self.assertEqual(records[0].runtime_run_id, "run-123")
+        self.assertEqual(records[0].runtime_correlation_id, "corr-123")
 
     def test_load_current_sprint_reads_counts(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
