@@ -65,6 +65,21 @@ O piloto requer o checkout e seu catálogo externo. A CLI não foi integrada ao
 executável nativo nem ao dashboard. Veja o
 [índice de documentação](../docs/observatory/README.md) para categorias e limites.
 
+### Validação do piloto
+
+```bash
+poetry run python -m unittest discover -s tests -p 'test_knowledge.py'
+poetry run python -m unittest discover -s tests
+```
+
+O aceite cobre consultas no corpus real e um ciclo completo da CLI em processos
+separados, com fontes e cache temporários: índice ausente, carga inicial, busca
+com procedência, resposta limitada, detecção de alteração, atualização,
+remoção do catálogo e recuperação após falha. Os testes não modificam o índice
+operacional nem as fontes reais. NFC/NFD são testados tanto nas fontes quanto
+nas consultas. O ambiente deve estar instalado com Poetry para que a CLI por
+módulo seja importável também fora do diretório do pacote.
+
 ## Evidência dos workflows
 
 O overview lê também `Metrics/request-events.jsonl` (schema versão 1).

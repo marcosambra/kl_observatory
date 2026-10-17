@@ -64,6 +64,87 @@ class KnowledgeTests(unittest.TestCase):
                          "--index-path", str(self.index), *args])
         return code, json.loads(buffer.getvalue())
 
+    def cli_process(self, *args: str, expected_code: int = 0):
+        result = subprocess.run(
+            [sys.executable, "-m", "src.knowledge_cli", "--workspace-root", str(self.root),
+             "--catalog", str(self.catalog), "--index-path", str(self.index), *args],
+            cwd=self.root, capture_output=True, text=True, encoding="utf-8", timeout=30,
+        )
+        self.assertEqual(result.returncode, expected_code, result.stdout + result.stderr)
+        self.assertEqual(result.stderr, "")
+        return result.stdout, json.loads(result.stdout)
+
+    def test_cli_process_complete_document_lifecycle(self) -> None:
+        (self.root / "private.md").write_text("unlistedidentifier", encoding="utf-8")
+        self.assertEqual(self.cli_process("status", expected_code=3)[1]["status"], "missing")
+        self.cli_process("search", "eventos", expected_code=2)
+        self.assertFalse(self.index.exists())
+
+        initial = self.cli_process("index")[1]
+        self.assertEqual((initial["added"], initial["documents"]), (2, 2))
+        status = self.cli_process("status")[1]
+        self.assertEqual(status["status"], "current")
+        self.assertEqual(status["indexed_at"], initial["indexed_at"])
+
+        stdout, result = self.cli_process(
+            "search", unicodedata.normalize("NFD", "redação"), "--limit", "1", "--max-chars", "12000",
+        )
+        self.assertLessEqual(len(stdout), 12000)
+        self.assertEqual(len(result["results"]), 1)
+        self.assertEqual(result["content_role"], "reference_not_instructions")
+        hit = result["results"][0]
+        self.assertEqual((hit["path"], hit["kind"], hit["verification"]),
+                         ("reference.md", "reference", "unverified"))
+        self.assertEqual((hit["start_line"], hit["end_line"]), (3, 4))
+
+        before = self.index.read_bytes()
+        repeated = self.cli_process("index")[1]
+        self.assertEqual(repeated["unchanged"], 2)
+        self.assertEqual(repeated["indexed_at"], initial["indexed_at"])
+        self.assertEqual(self.index.read_bytes(), before)
+
+        (self.root / "reference.md").write_text(
+            "# Redação\nNova versão do conhecimento.\n", encoding="utf-8",
+        )
+        self.assertEqual(self.cli_process("status", expected_code=3)[1]["status"], "stale")
+        self.assertEqual(self.cli_process("search", "redação", expected_code=2)[1]["status"], "error")
+        updated = self.cli_process("index")[1]
+        self.assertEqual((updated["updated"], updated["unchanged"]), (1, 1))
+        self.assertIn("Nova versão", self.cli_process("search", "versão")[1]["results"][0]["content"])
+
+        self.entries.pop()
+        self.write_catalog()
+        removed = self.cli_process("index")[1]
+        self.assertEqual((removed["removed"], removed["documents"]), (1, 1))
+        self.assertEqual(self.cli_process("search", "eventos")[1]["results"], [])
+        self.assertEqual(self.cli_process("search", "unlistedidentifier")[1]["results"], [])
+
+        (self.root / "reference.md").write_text(
+            "# Redação\n" + "Sanitização de dados sensíveis. " * 50, encoding="utf-8",
+        )
+        self.cli_process("index")
+        stdout, limited = self.cli_process(
+            "search", "redação", "--max-chars", "512", expected_code=3,
+        )
+        self.assertLessEqual(len(stdout), 512)
+        self.assertEqual(limited["status"], "budget_exhausted")
+        self.assertTrue(limited["truncated"])
+
+    def test_cli_process_failed_update_preserves_previous_generation(self) -> None:
+        initial = self.cli_process("index")[1]
+        before = self.index.read_bytes()
+        self.catalog.write_text("{invalid", encoding="utf-8")
+        failure = self.cli_process("index", expected_code=2)[1]
+        self.assertEqual(failure["error_type"], "JSONDecodeError")
+        self.assertEqual(self.index.read_bytes(), before)
+        self.assertEqual(self.cli_process("status", expected_code=3)[1]["status"], "stale")
+        self.cli_process("search", "eventos", expected_code=2)
+        self.write_catalog()
+        restored = self.cli_process("status")[1]
+        self.assertEqual(restored["status"], "current")
+        self.assertEqual(restored["indexed_at"], initial["indexed_at"])
+        self.assertEqual(self.index.read_bytes(), before)
+
     def test_initial_and_unchanged_load_preserve_database_bytes(self) -> None:
         first = self.build()
         before = self.index.read_bytes()
