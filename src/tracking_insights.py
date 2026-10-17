@@ -1,8 +1,41 @@
 from __future__ import annotations
 
 import re
+import json
 from pathlib import Path
 from typing import Any
+
+
+def summarize_workflow_events(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {"source": "unavailable", "observed_runs": None, "outcomes": {},
+                "snapshot_confirmed": None, "errors": ["request-events.jsonl ausente"]}
+    latest: dict[tuple[str, str], dict[str, Any]] = {}
+    errors = []
+    with path.open(encoding="utf-8") as stream:
+        for number, line in enumerate(stream, 1):
+            try:
+                event = json.loads(line)
+                if (not isinstance(event, dict) or event.get("schema_version") != 1
+                        or not isinstance(event.get("details"), dict)):
+                    raise ValueError("Unsupported request event")
+                details = event["details"]
+                if event.get("kind") != "step" or details.get("node") != "workflow_result":
+                    continue
+                if any(not isinstance(value, str) or not value.strip() for value in
+                       (event.get("request_id"), details.get("run_id"), details.get("outcome"))):
+                    raise ValueError("Workflow identity missing")
+                latest[(event["request_id"], details["run_id"])] = details
+            except (ValueError, TypeError):
+                errors.append(f"Evento inválido na linha {number}")
+    outcomes: dict[str, int] = {}
+    for details in latest.values():
+        outcome = details["outcome"]
+        outcomes[outcome] = outcomes.get(outcome, 0) + 1
+    return {"source": "partial" if errors else "real", "observed_runs": len(latest),
+            "outcomes": outcomes,
+            "snapshot_confirmed": sum(item.get("reason") == "snapshot_confirmed" for item in latest.values()),
+            "errors": errors}
 
 
 def build_tracking_insights(tracking_payload: dict[str, Any]) -> dict[str, Any]:
@@ -52,6 +85,7 @@ def build_tracking_insights(tracking_payload: dict[str, Any]) -> dict[str, Any]:
             "flow_counts": runtime_flow_counts,
             "status_counts": runtime_status_counts,
         },
+        "workflow_results": tracking_payload.get("workflow_results", {"source": "unavailable"}),
     }
 
 

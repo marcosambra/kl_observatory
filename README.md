@@ -1,5 +1,17 @@
 # KL Observatory
 
+## Evidência dos workflows
+
+O overview lê também `Metrics/request-events.jsonl` (schema versão 1).
+Resultados `workflow_result` são agrupados por request/run, mantendo a última
+observação para não contar cada retomada como uma execução nova. O painel
+exibe outcomes e confirmações de snapshot observados, sem somar spans ou
+converter duração em horas de Task. A fonte é identificada como `real`,
+`partial` ou `unavailable`; linhas inválidas são informadas. Não há percentual
+de cobertura sem denominador conhecido. Os sinais de auditoria demonstrativos
+continuam identificados separadamente; falha da API é indicada ao usar arquivos
+locais. Nenhum servidor ou banco precisa ser iniciado para os testes unitários.
+
 Operational observatory for the KwikLedgers agent stack.
 
 This project reads the existing workspace tracking outputs under

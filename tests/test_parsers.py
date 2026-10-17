@@ -4,6 +4,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from src.tracking_insights import summarize_workflow_events
 
 from src.parsers import (
     load_current_sprint,
@@ -88,6 +89,29 @@ CURRENT_SPRINT_SAMPLE = {
 
 
 class ParserTests(unittest.TestCase):
+    def test_workflow_ledger_counts_latest_observed_run_without_summing_spans(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "request-events.jsonl"
+            self.assertEqual(summarize_workflow_events(path)["source"], "unavailable")
+            def event(outcome, reason):
+                return {"schema_version": 1, "kind": "step", "request_id": "request",
+                        "duration_ms": 1000, "details": {"node": "workflow_result",
+                        "run_id": "run", "outcome": outcome, "reason": reason}}
+            path.write_text("\n".join(json.dumps(value) for value in (
+                event("waiting", "snapshot_not_checked"), event("completed", "snapshot_confirmed"))),
+                encoding="utf-8")
+            result = summarize_workflow_events(path)
+            self.assertEqual(result["source"], "real")
+            self.assertEqual(result["observed_runs"], 1)
+            self.assertEqual(result["outcomes"], {"completed": 1})
+            self.assertEqual(result["snapshot_confirmed"], 1)
+            self.assertNotIn("duration_ms", result)
+            with path.open("a", encoding="utf-8") as stream:
+                stream.write("\n{broken")
+            result = summarize_workflow_events(path)
+            self.assertEqual(result["source"], "partial")
+            self.assertEqual(len(result["errors"]), 1)
+
     def test_parse_ai_usage_log_extracts_actions(self) -> None:
         records = parse_ai_usage_log(USAGE_SAMPLE)
 

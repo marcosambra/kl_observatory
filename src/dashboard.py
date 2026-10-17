@@ -82,8 +82,8 @@ def load_overview(api_base_url: str) -> tuple[dict[str, Any], str]:
         response = requests.get(f"{api_base_url}/overview", timeout=10)
         response.raise_for_status()
         return response.json(), "API + Postgres"
-    except requests.RequestException:
-        return build_tracking_overview(), "Direct AI_Tracking files"
+    except requests.RequestException as error:
+        return build_tracking_overview(), f"API unavailable ({type(error).__name__}); direct AI_Tracking files"
 
 
 def format_timestamp(value: str | None) -> str:
@@ -509,6 +509,13 @@ def render_metrics(
         + runtime_status_counts.get("execute_failed", 0)
         + runtime_status_counts.get("invalid_transition", 0),
     )
+    workflow_results = tracking_insights.get("workflow_results", {"source": "unavailable"})
+    st.caption(f"Workflow evidence source: {workflow_results['source']}. "
+               "Observed runs only; no coverage percentage or task-hours estimate.")
+    if workflow_results["source"] in {"real", "partial"}:
+        st.json(workflow_results)
+    if workflow_results.get("errors"):
+        st.warning("; ".join(workflow_results["errors"]))
 
 
 def render_sprint_history(overview: dict[str, Any]) -> None:

@@ -27,6 +27,7 @@ from src.tracking_insights import (
     parse_storypoints_report,
     summarize_audit_log,
     summarize_repo_work_item_context,
+    summarize_workflow_events,
 )
 
 
@@ -183,6 +184,7 @@ def build_tracking_overview(
         "current_sprint_markdown": current_sprint_markdown,
         "daily_logs": daily_logs,
         "tracking_status": status,
+        "workflow_results": summarize_workflow_events(root / "Metrics" / "request-events.jsonl"),
     }
 
 
