@@ -49,7 +49,8 @@ quebra de linha, não uma estimativa de tokens. `truncated` sinaliza resultados
 omitidos. Argumentos inválidos retornam erro, não sucesso vazio.
 
 A consulta trata palavras como texto, não SQL ou sintaxe FTS. Usa termos em OR,
-normaliza acentos e valoriza títulos/cabeçalhos via BM25. Não há compreensão
+normaliza acentos, inclusive nas representações Unicode NFC/NFD, e valoriza
+títulos/cabeçalhos via BM25. Não há compreensão
 semântica, tradução, expansão de plurais ou preferência automática por documentos
 mais recentes. Em empate de relevância, a busca prefere verificados e referências.
 Trechos idênticos são deduplicados; filtros são exatos.

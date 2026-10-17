@@ -6,6 +6,7 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
+import unicodedata
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
@@ -192,6 +193,20 @@ class KnowledgeTests(unittest.TestCase):
         self.assertEqual(self.query("eventos", component="other")["results"], [])
         self.assertEqual(len(self.query("eventos", kind=DocumentKind.HISTORICAL_EVIDENCE)["results"]), 1)
         self.assertEqual(self.query("eventos", kind=DocumentKind.PROPOSAL)["results"], [])
+
+    def test_search_canonical_unicode_equivalence(self) -> None:
+        original = (self.root / "reference.md").read_text(encoding="utf-8")
+        for source_form in ("NFC", "NFD"):
+            (self.root / "reference.md").write_text(
+                unicodedata.normalize(source_form, original), encoding="utf-8",
+            )
+            self.build()
+            for term in ("redação", "sanitização", "sensíveis"):
+                for query_form in ("NFC", "NFD"):
+                    with self.subTest(source_form=source_form, term=term, query_form=query_form):
+                        result = self.query(unicodedata.normalize(query_form, term))
+                        self.assertEqual(len(result["results"]), 1)
+                        self.assertEqual(result["results"][0]["path"], "reference.md")
 
     def test_literal_query_cannot_execute_fts_operators_or_sql(self) -> None:
         self.build()

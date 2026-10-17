@@ -4,6 +4,7 @@ import hashlib
 import json
 import re
 import sqlite3
+import unicodedata
 from contextlib import closing
 from dataclasses import asdict
 from datetime import date, datetime, timezone
@@ -311,7 +312,9 @@ def search(
 ) -> dict[str, object]:
     if not 1 <= limit <= 20 or not 512 <= max_chars <= MAX_RESPONSE_CHARS:
         raise KnowledgeError("Use limit entre 1 e 20 e max_chars entre 512 e 24000.")
-    terms = list(dict.fromkeys(re.findall(r"[^\W_]+", query, flags=re.UNICODE)))
+    terms = list(dict.fromkeys(re.findall(
+        r"[^\W_]+", unicodedata.normalize("NFC", query), flags=re.UNICODE,
+    )))
     if not terms or len(query) > MAX_QUERY_CHARS:
         raise KnowledgeError("Consulta deve conter palavras e ter no maximo 1000 caracteres.")
     if component is not None:
