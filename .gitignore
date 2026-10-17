@@ -7,3 +7,5 @@ __pycache__/
 build/
 dist/
 *.spec
+var/knowledge.sqlite3
+var/knowledge.sqlite3-*

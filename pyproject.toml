@@ -18,6 +18,7 @@ dependencies = [
 [project.scripts]
 kl-observatory = "src.launcher:main"
 build-kl-observatory = "src.builder:main"
+kl-knowledge = "src.knowledge_cli:main"
 
 [tool.poetry]
 packages = [{ include = "src" }, { include = "api" }]
