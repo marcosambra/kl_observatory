@@ -9,18 +9,28 @@ from typing import Any
 def summarize_workflow_events(path: Path) -> dict[str, Any]:
     if not path.exists():
         return {"source": "unavailable", "observed_runs": None, "outcomes": {},
-                "snapshot_confirmed": None, "errors": ["request-events.jsonl ausente"]}
+                "snapshot_confirmed": None, "duplicate_prevented": None,
+                "errors": ["request-events.jsonl ausente"]}
     latest: dict[tuple[str, str], dict[str, Any]] = {}
+    duplicates: set[tuple[str, str, str]] = set()
     errors = []
     with path.open(encoding="utf-8") as stream:
         for number, line in enumerate(stream, 1):
             try:
                 event = json.loads(line)
-                if (not isinstance(event, dict) or event.get("schema_version") != 1
-                        or not isinstance(event.get("details"), dict)):
+                if not isinstance(event, dict) or event.get("schema_version") != 1:
                     raise ValueError("Unsupported request event")
-                details = event["details"]
-                if event.get("kind") != "step" or details.get("node") != "workflow_result":
+                details = event.get("details", {})
+                if not isinstance(details, dict):
+                    raise ValueError("Unsupported event details")
+                node = details.get("node")
+                if event.get("kind") != "step" or node not in {"workflow_result", "duplicate_prevented"}:
+                    continue
+                if node == "duplicate_prevented":
+                    identity = (event.get("request_id"), details.get("run_id"), details.get("observed_at"))
+                    if any(not isinstance(value, str) or not value.strip() for value in identity):
+                        raise ValueError("Duplicate observation identity missing")
+                    duplicates.add(identity)
                     continue
                 if any(not isinstance(value, str) or not value.strip() for value in
                        (event.get("request_id"), details.get("run_id"), details.get("outcome"))):
@@ -35,6 +45,7 @@ def summarize_workflow_events(path: Path) -> dict[str, Any]:
     return {"source": "partial" if errors else "real", "observed_runs": len(latest),
             "outcomes": outcomes,
             "snapshot_confirmed": sum(item.get("reason") == "snapshot_confirmed" for item in latest.values()),
+            "duplicate_prevented": len(duplicates),
             "errors": errors}
 
 

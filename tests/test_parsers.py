@@ -98,13 +98,18 @@ class ParserTests(unittest.TestCase):
                         "duration_ms": 1000, "details": {"node": "workflow_result",
                         "run_id": "run", "outcome": outcome, "reason": reason}}
             path.write_text("\n".join(json.dumps(value) for value in (
-                event("waiting", "snapshot_not_checked"), event("completed", "snapshot_confirmed"))),
+                {"schema_version": 1, "kind": "request_started"},
+                event("waiting", "snapshot_not_checked"), event("completed", "snapshot_confirmed"),
+                *[{"schema_version": 1, "kind": "step", "request_id": "request",
+                   "details": {"node": "duplicate_prevented", "run_id": "run",
+                               "observed_at": "2026-10-17T12:00:00Z"}}] * 2)),
                 encoding="utf-8")
             result = summarize_workflow_events(path)
             self.assertEqual(result["source"], "real")
             self.assertEqual(result["observed_runs"], 1)
             self.assertEqual(result["outcomes"], {"completed": 1})
             self.assertEqual(result["snapshot_confirmed"], 1)
+            self.assertEqual(result["duplicate_prevented"], 1)
             self.assertNotIn("duration_ms", result)
             with path.open("a", encoding="utf-8") as stream:
                 stream.write("\n{broken")

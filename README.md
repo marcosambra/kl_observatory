@@ -5,6 +5,10 @@
 O overview lê também `Metrics/request-events.jsonl` (schema versão 1).
 Resultados `workflow_result` são agrupados por request/run, mantendo a última
 observação para não contar cada retomada como uma execução nova. O painel
+conta `duplicate_prevented` somente com identidade e horário de observação,
+deduplicando a releitura da mesma evidência. Eventos válidos sem detalhes,
+como início de request, não tornam a fonte parcial.
+O painel
 exibe outcomes e confirmações de snapshot observados, sem somar spans ou
 converter duração em horas de Task. A fonte é identificada como `real`,
 `partial` ou `unavailable`; linhas inválidas são informadas. Não há percentual
