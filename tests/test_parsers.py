@@ -117,6 +117,21 @@ class ParserTests(unittest.TestCase):
             self.assertEqual(result["source"], "partial")
             self.assertEqual(len(result["errors"]), 1)
 
+    def test_workflow_ledger_reads_archived_segments_before_active_file(self) -> None:
+        def event(run, outcome):
+            return json.dumps({"schema_version": 1, "kind": "step", "request_id": "request",
+                               "details": {"node": "workflow_result", "run_id": run,
+                                           "outcome": outcome, "reason": "snapshot_confirmed"}})
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "request-events.jsonl"
+            (Path(directory) / "request-events.part0002.jsonl").write_text(event("b", "completed") + "\n")
+            (Path(directory) / "request-events.part0001.jsonl").write_text(event("a", "failed") + "\n")
+            path.write_text(event("a", "completed") + "\n")
+            result = summarize_workflow_events(path)
+        self.assertEqual(result["source"], "real")
+        self.assertEqual(result["observed_runs"], 2)
+        self.assertEqual(result["outcomes"], {"completed": 2})
+
     def test_parse_ai_usage_log_extracts_actions(self) -> None:
         records = parse_ai_usage_log(USAGE_SAMPLE)
 

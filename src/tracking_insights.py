@@ -3,41 +3,60 @@ from __future__ import annotations
 import re
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
+
+
+def _ledger_segments(path: Path) -> list[Path]:
+    """Archived ``<stem>.partNNNN<suffix>`` segments in order, then the active file."""
+    pattern = re.compile(rf"{re.escape(path.stem)}\.part(\d+)")
+    parts = sorted(
+        (int(match.group(1)), entry) for entry in (path.parent.iterdir() if path.parent.is_dir() else [])
+        if entry.suffix == path.suffix and (match := pattern.fullmatch(entry.stem))
+    )
+    return [entry for _, entry in parts] + ([path] if path.exists() else [])
+
+
+def _read_lines(segments: list[Path]) -> Iterator[str]:
+    for segment in segments:
+        try:
+            with segment.open(encoding="utf-8") as stream:
+                yield from stream
+        except FileNotFoundError:
+            continue
 
 
 def summarize_workflow_events(path: Path) -> dict[str, Any]:
-    if not path.exists():
+    segments = _ledger_segments(path)
+    if not segments:
         return {"source": "unavailable", "observed_runs": None, "outcomes": {},
                 "snapshot_confirmed": None, "duplicate_prevented": None,
                 "errors": ["request-events.jsonl ausente"]}
     latest: dict[tuple[str, str], dict[str, Any]] = {}
     duplicates: set[tuple[str, str, str]] = set()
     errors = []
-    with path.open(encoding="utf-8") as stream:
-        for number, line in enumerate(stream, 1):
-            try:
-                event = json.loads(line)
-                if not isinstance(event, dict) or event.get("schema_version") != 1:
-                    raise ValueError("Unsupported request event")
-                details = event.get("details", {})
-                if not isinstance(details, dict):
-                    raise ValueError("Unsupported event details")
-                node = details.get("node")
-                if event.get("kind") != "step" or node not in {"workflow_result", "duplicate_prevented"}:
-                    continue
-                if node == "duplicate_prevented":
-                    identity = (event.get("request_id"), details.get("run_id"), details.get("observed_at"))
-                    if any(not isinstance(value, str) or not value.strip() for value in identity):
-                        raise ValueError("Duplicate observation identity missing")
-                    duplicates.add(identity)
-                    continue
-                if any(not isinstance(value, str) or not value.strip() for value in
-                       (event.get("request_id"), details.get("run_id"), details.get("outcome"))):
-                    raise ValueError("Workflow identity missing")
-                latest[(event["request_id"], details["run_id"])] = details
-            except (ValueError, TypeError):
-                errors.append(f"Evento inválido na linha {number}")
+    for number, line in enumerate(_read_lines(segments), 1):
+        try:
+            event = json.loads(line)
+            if not isinstance(event, dict) or event.get("schema_version") != 1:
+                raise ValueError("Unsupported request event")
+            details = event.get("details", {})
+            if not isinstance(details, dict):
+                raise ValueError("Unsupported event details")
+            node = details.get("node")
+            if event.get("kind") != "step" or node not in {"workflow_result", "duplicate_prevented"}:
+                continue
+            if node == "duplicate_prevented":
+                identity = (event.get("request_id"), details.get("run_id"), details.get("observed_at"))
+                if any(not isinstance(value, str) or not value.strip() for value in identity):
+                    raise ValueError("Duplicate observation identity missing")
+                duplicates.add(identity)
+                continue
+            if any(not isinstance(value, str) or not value.strip() for value in
+                   (event.get("request_id"), details.get("run_id"), details.get("outcome"))):
+                raise ValueError("Workflow identity missing")
+            latest[(event["request_id"], details["run_id"])] = details
+        except (ValueError, TypeError):
+            errors.append(f"Evento inválido na linha {number}")
     outcomes: dict[str, int] = {}
     for details in latest.values():
         outcome = details["outcome"]
